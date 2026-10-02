@@ -7,7 +7,6 @@ from argparse import Action, ArgumentParser, Namespace, FileType
 
 import maas_engine
 
-
 # class UrlAction(argparse.Action):
 #     def __init__(self, option_strings, dest, nargs=None, **kwargs):
 #         if nargs is not None:
@@ -226,6 +225,25 @@ def amqp_parser() -> ArgumentParser:
         envvar="AMQP_MAX_PRIORITY",
         required=False,
         default=10,
+        type=int,
+    )
+
+    # Without heartbeats an idle connection carries no traffic at all, so
+    # anything in the path that expires idle TCP flows (haproxy timeouts, the
+    # docker swarm IPVS table, ~15 min) cuts it without the broker noticing:
+    # the broker keeps a "running" connection whose consumer can hold a
+    # prefetched message unacked forever. The broker sends heartbeats every
+    # timeout/2 and drops a peer after ~timeout of silence, so the value is
+    # also the longest a single message may block the consumer loop.
+    parser.add_argument(
+        "--amqp-heartbeat",
+        dest="amqp_heartbeat",
+        help="AMQP heartbeat timeout in seconds, 0 to disable "
+        "(default: %(default)s). Must exceed the longest message processing time",
+        action=EnvDefault,
+        envvar="AMQP_HEARTBEAT",
+        required=False,
+        default=600,
         type=int,
     )
 

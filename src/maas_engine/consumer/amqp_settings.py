@@ -11,11 +11,15 @@ class AMQPSettings:
     to build them from a dictionnary typically loaded from a json file
     """
 
-    def __init__(self, url):
+    def __init__(self, url, heartbeat=None):
 
         self.logger = logging.getLogger(self.__class__.__name__)
 
         self.url = url
+
+        # AMQP heartbeat timeout in seconds; None or 0 disables heartbeats
+        # (kombu's default). See --amqp-heartbeat in maas_engine.cli.args.
+        self.heartbeat = heartbeat
 
         self.connection = None
 
@@ -113,8 +117,17 @@ class AMQPSettings:
         Returns:
             kombu.BrokerConnection: working connection
         """
-        self.connection = kombu.BrokerConnection(self.url)
+        # The heartbeat lives on this connection, and kombu's ConsumerMixin
+        # clones it for every (re)connection of the consume loop, which also
+        # calls heartbeat_check() between messages. Producers publish with
+        # retry=True, which re-establishes the connection if the broker dropped
+        # it for missed heartbeats.
+        self.connection = kombu.BrokerConnection(
+            self.url, heartbeat=self.heartbeat or 0
+        )
         self.logger.info(
-            "AMQP: connected to %s", AMQPSettings.mask_amqp_password(self.url)
+            "AMQP: connected to %s (heartbeat: %s)",
+            AMQPSettings.mask_amqp_password(self.url),
+            f"{self.heartbeat}s" if self.heartbeat else "disabled",
         )
         return self.connection
