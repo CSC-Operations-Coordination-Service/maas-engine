@@ -76,7 +76,11 @@ class MaasEngineConsumer(MaasConsumerMixin):
 
         # setup AMQP
         # TODO add retry policy like in collector
-        self.amqp_settings = AMQPSettings(self.args.amqp_url)
+        # getattr: callers building their own Namespace (tests, scripts) may
+        # not carry the option; they keep the previous behaviour, no heartbeat.
+        self.amqp_settings = AMQPSettings(
+            self.args.amqp_url, heartbeat=getattr(self.args, "amqp_heartbeat", None)
+        )
         self.amqp_settings.connect()
         self.amqp_settings.build_queues(Engine.CONFIG_DICT, self.args.amqp_max_priority)
 
