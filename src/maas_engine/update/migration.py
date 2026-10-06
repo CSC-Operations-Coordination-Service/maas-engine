@@ -15,6 +15,7 @@ from opensearchpy.exceptions import NotFoundError, RequestError
 
 from maas_engine.cli import args as maas_args
 from maas_engine.cli.log import setup_logging
+from maas_engine.consumer.amqp_settings import AMQPSettings
 
 
 # *search indices methods like put_template have arguments handled by decorator
@@ -68,7 +69,11 @@ class MaasMigrator:
         # connect to database
         es_url = maas_args.get_es_credentials_url(self.args)
 
-        self.logger.info("Setup connection to opensearch: %s", es_url)
+        # es_url embeds the credentials: log it masked, as the AMQP url is
+        self.logger.info(
+            "Setup connection to opensearch: %s",
+            AMQPSettings.mask_amqp_password(es_url),
+        )
 
         self.es_conn = db_connections.create_connection(
             hosts=[es_url],
