@@ -35,10 +35,11 @@ Each connection is one KV version 2 secret, at `<VAULT_KV_MOUNT>/<path>`, holdin
 `url`, and `username` and `password` when the service needs authentication:
 
 ```shell
+# password=- reads the password from stdin, so it stays out of the shell history
 bao kv put -mount=secret maas/cds/opensearch \
-    url=https://opensearch.internal:9200 username=maas password=...
+    url=https://opensearch.internal:9200 username=maas password=-
 bao kv put -mount=secret maas/cds/amqp \
-    url=amqp://rabbitmq.internal:5672// username=maas password=...
+    url=amqp://rabbitmq.internal:5672// username=maas password=-
 ```
 
 Setting up the vault itself (KV engine, policies, AppRole, secret id as a Swarm
@@ -75,6 +76,8 @@ services:
       VAULT_CACERT: /run/secrets/vault_ca
       VAULT_ROLE_ID: <role id>
       VAULT_SECRET_ID_FILE: /run/secrets/maas_engine_cds_vault_secret_id
+      NO_PROXY: bao.internal
+      no_proxy: bao.internal
     secrets:
       - maas_engine_cds_vault_secret_id
       - vault_ca
@@ -86,6 +89,11 @@ secrets:
     external: true
 ```
 
+The vault client honours the `https_proxy` and `http_proxy` variables. When the
+engine reaches the internet through a proxy, list the vault host in `NO_PROXY` and
+`no_proxy`: an egress proxy usually refuses port 8200, and the engine would then fail
+at startup with a `ProxyError`.
+
 When `ES_URL`, `ES_USERNAME` or `ES_PASSWORD` (`AMQP_*` alike) are still set, they are
 ignored, and a warning names them, never their values. Remove them once the secrets
 are in the vault, and rotate the passwords they held in plain text.
@@ -96,7 +104,7 @@ The connections are read **once, at startup**. Write a new version of the secret
 then restart the services that use it:
 
 ```shell
-bao kv patch -mount=secret maas/cds/opensearch password=n3w
+bao kv patch -mount=secret maas/cds/opensearch password=-
 docker service update --force <stack>_maas-engine
 ```
 
