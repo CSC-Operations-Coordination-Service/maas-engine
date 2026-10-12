@@ -541,6 +541,7 @@ def migration_main(argv, migrator_class):
         parents=[
             maas_args.log_parser(),
             maas_args.es_parser(),
+            maas_args.vault_parser(),
         ]  # , maas_args.amqp_parser()]
     )
     parser.add_argument(
