@@ -38,8 +38,11 @@
 - `maas_migrate` no longer logs the OpenSearch password: with `-v` or `-vv`, it printed
   the connection url with the password in clear. The password now shows as `**`, also
   when it is written straight into `ES_URL`.
-- New requirement: `maas-model[vault]>=3.1.0,<4`. maas-model 3.1.0 is the first release
-  with the vault client, and its `vault` extra installs `hvac`.
+- New requirement: maas-model 3.1.0 or a later 3.x, with its `vault` extra
+  (`maas-model[vault]>=3.1.0.dev0,<4`). maas-model 3.1.0 is the first release with the
+  vault client, and the `vault` extra installs `hvac`. The `.dev0` in the bound lets pip
+  also install the maas-model development builds made after 3.1.0 (3.1.0.post1.devN)
+  from the Nexus dev index, which holds no releases.
 - Projects that build their own argument parser from `es_parser()` and `amqp_parser()`,
   instead of `engine_parser()`, must add `vault_parser()` to its parents. Those parsers
   now take `--es-vault-path` and `--amqp-vault-path`, and without `vault_parser()` a set
