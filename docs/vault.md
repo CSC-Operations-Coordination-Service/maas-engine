@@ -3,8 +3,8 @@
 maas-engine can read its OpenSearch and AMQP connections from an
 [OpenBao](https://openbao.org) or HashiCorp Vault server, instead of `ES_URL`,
 `ES_USERNAME`, `ES_PASSWORD`, `AMQP_URL`, `AMQP_USERNAME` and `AMQP_PASSWORD`.
-maas-collector reads the same secrets, so every service of a stack shares one secret
-per connection, and no password is left in the compose files.
+maas-collector 3.11.0 and later read the same secrets, so every service of a stack
+shares one secret per connection, and no password is left in the compose files.
 
 The daemon (`python -m maas_engine`), `maas_engine_cli`, `maas_migrate` and the queue
 utilities all read them the same way.

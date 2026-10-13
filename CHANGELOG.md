@@ -6,9 +6,9 @@
   `ES_VAULT_PATH` (`--es-vault-path`) and `AMQP_VAULT_PATH` (`--amqp-vault-path`) to the
   path of a KV version 2 secret holding the connection's `url` and, when the service
   needs them, its `username` and `password`. The secret then replaces `ES_URL`,
-  `ES_USERNAME` and `ES_PASSWORD`, or their `AMQP_*` counterparts. maas-collector reads
-  the same secrets, so a stack keeps each password in one place instead of its compose
-  files. See [docs/vault.md](docs/vault.md).
+  `ES_USERNAME` and `ES_PASSWORD`, or their `AMQP_*` counterparts. maas-collector 3.11.0
+  and later read the same secrets, so a stack keeps each password in one place instead
+  of its compose files. See [docs/vault.md](docs/vault.md).
 - Without a vault path, a connection comes from the environment variables as before.
   One connection can come from the vault and the other from the environment.
 - New settings to reach the vault, each with a matching `--vault-*` option:
@@ -52,9 +52,10 @@
   vault client, and the `vault` extra installs `hvac`. The `.dev0` in the bound lets pip
   also install the maas-model development builds made after 3.1.0 (3.1.0.post1.devN)
   from the Nexus dev index, which holds no releases.
-- Projects that build their own argument parser from `es_parser()` and `amqp_parser()`,
-  instead of `engine_parser()`, must add `vault_parser()` to its parents. Those parsers
-  now take `--es-vault-path` and `--amqp-vault-path`, and without `vault_parser()` a set
-  vault path fails with an `AttributeError` on `vault_addr`.
+- Projects that build their own argument parser from `es_parser()` or `amqp_parser()`
+  (or both), instead of `engine_parser()`, must add `vault_parser()` to its parents:
+  `es_parser()` now takes `--es-vault-path` and `amqp_parser()` `--amqp-vault-path`, and
+  without `vault_parser()` a set vault path fails with an `AttributeError` on
+  `vault_addr`. maas-cds 2.16.0 adds it to the parser of satruman.
 
 Earlier versions are only recorded in the git history.
