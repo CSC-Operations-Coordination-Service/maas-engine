@@ -42,15 +42,9 @@ bao kv put -mount=secret maas/cds/amqp \
     url=amqp://rabbitmq.internal:5672// username=maas password=-
 ```
 
-The engine puts `username` and `password` into the connection url as they are, and
-maas-collector builds its urls the same way. Use only letters, digits and `-._~` in
-them, for example a password from `openssl rand -hex 24`, or store them
-percent-encoded, like `/` as `%2F` and `%` as `%25`. An unencoded `/`, `?` or `#` in
-the password makes the OpenSearch or AMQP client fail with
-`ValueError: Port could not be cast to integer value as '…'`, which quotes the start
-of the password, and `maas_migrate -v` logs all of it first. Unencoded, a `%` followed
-by two hexadecimal digits is decoded, and a `:` ends the username: the login then
-fails.
+Store `username` and `password` as they are. The engine percent-encodes them when it
+builds the connection url, so they may contain any character, like `/`, `#` or `%`.
+maas-collector 3.11.0 encodes them the same way, so one secret serves both.
 
 Setting up the vault itself (KV engine, policies, AppRole, secret id as a Swarm
 secret) is described in the maas-collector documentation, page *Credentials from

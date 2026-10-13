@@ -2,8 +2,11 @@
 
 import logging
 from unittest.mock import Mock
+from urllib.parse import quote
 
 import pytest
+from kombu import Connection
+from opensearchpy import OpenSearch
 
 from maas_engine.cli.args import (
     engine_parser,
@@ -138,6 +141,46 @@ def test_vault_connection_replaces_the_environment(vault_env, caplog):
     assert "s3cr3t-amqp" not in caplog.text
 
 
+def test_vault_credentials_reach_the_clients_unchanged(vault_env, fake_vault):
+    """the vault holds raw values: a "/", "?" or "#" must not end the host part of
+    the url, nor a "%41" turn into "A" """
+    username = "maas@cds"
+    password = "a/b#c%41?d:e@f"
+    fake_vault.put(
+        "secret",
+        "maas/cds/opensearch",
+        {**OPENSEARCH, "username": username, "password": password},
+    )
+    fake_vault.put(
+        "secret", "maas/cds/amqp", {**AMQP, "username": username, "password": password}
+    )
+    vault_env.setenv("ES_VAULT_PATH", "maas/cds/opensearch")
+    vault_env.setenv("AMQP_VAULT_PATH", "maas/cds/amqp")
+
+    namespace = parse([])
+
+    opensearch_host = OpenSearch(
+        hosts=[get_es_credentials_url(namespace)]
+    ).transport.hosts[0]
+    assert opensearch_host["host"] == "opensearch.example"
+    assert opensearch_host["port"] == 9200
+    assert opensearch_host["http_auth"] == f"{username}:{password}"
+
+    amqp = Connection(get_amqp_credentials_url(namespace))
+    assert (amqp.hostname, amqp.port) == ("rabbit.example", 5672)
+    assert amqp.virtual_host == "/"
+    assert (amqp.userid, amqp.password) == (username, password)
+
+
+def test_environment_credentials_are_used_as_they_are(vault_env):
+    """ES_PASSWORD may hold an already encoded value: it is not encoded again"""
+    vault_env.setenv("ES_URL", "http://localhost:9200")
+    vault_env.setenv("ES_USERNAME", "admin")
+    vault_env.setenv("ES_PASSWORD", "a%2Fb")
+
+    assert get_es_credentials_url(parse([])) == "http://admin:a%2Fb@localhost:9200"
+
+
 def test_vault_connection_without_authentication(vault_env, fake_vault):
     fake_vault.put("secret", "maas/cds/amqp", {"url": "amqp://rabbit.example:5672//"})
     vault_env.setenv("AMQP_VAULT_PATH", "maas/cds/amqp")
@@ -208,3 +251,28 @@ def test_migration_connects_with_the_vault_connection(vault_env, tmp_path):
         migration_main(["-r", str(tmp_path), "--list"], MaasMigrator)
 
     assert connection_kwargs["hosts"] == [ES_URL]
+
+
+def test_migration_log_masks_a_vault_password_with_reserved_characters(
+    vault_env, fake_vault, tmp_path, caplog
+):
+    """encoded, the password stays in the user information of the url, where the
+    migration log masks it"""
+    password = "a/b#c%41?d:e@f"
+    fake_vault.put(
+        "secret", "maas/cds/opensearch", {**OPENSEARCH, "password": password}
+    )
+    vault_env.setenv("ES_VAULT_PATH", "maas/cds/opensearch")
+    (tmp_path / MaasMigrator.TEMPLATE_DIR).mkdir()
+    connection = Mock()
+    connection.indices.get_alias.return_value = {}
+    vault_env.setattr(
+        migration.db_connections, "create_connection", lambda **kwargs: connection
+    )
+
+    with caplog.at_level(logging.INFO), pytest.raises(SystemExit):
+        migration_main(["-r", str(tmp_path), "--list", "-v"], MaasMigrator)
+
+    assert "https://maas:**@opensearch.example:9200" in caplog.text
+    for fragment in (password, "a/b#c", quote(password, safe=""), "a%2Fb"):
+        assert fragment not in caplog.text
