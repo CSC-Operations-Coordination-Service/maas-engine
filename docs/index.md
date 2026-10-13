@@ -8,6 +8,7 @@ Task runner for MAAS projects.
 :maxdepth: 2
 
 Overview <readme>
+Configuration <configuration>
 maas_migrate <maas_migrate>
 maas_engine_cli <maas_engine_cli>
 Connections from the vault <vault>
