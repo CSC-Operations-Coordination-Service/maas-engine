@@ -37,7 +37,15 @@
   startup with a `ProxyError`.
 - `maas_migrate` no longer logs the OpenSearch password: with `-v` or `-vv`, it printed
   the connection url with the password in clear. The password now shows as `**`, also
-  when it is written straight into `ES_URL`.
+  when it is written straight into `ES_URL`, unless the username or the password holds
+  an unencoded `/`, `?` or `#`, as the next item explains.
+- The username and password go into the connection url as they are, from the vault as
+  from the environment. When you generate new ones, use only letters, digits and
+  `-._~`, for example `openssl rand -hex 24`, or store them percent-encoded, like `/` as
+  `%2F` and `%` as `%25`. An unencoded `/`, `?` or `#` in the password makes the
+  OpenSearch or AMQP client fail with
+  `ValueError: Port could not be cast to integer value as '…'`, which quotes the start
+  of the password, and `maas_migrate -v` logs all of it first.
 - New requirement: maas-model 3.1.0 or a later 3.x, with its `vault` extra
   (`maas-model[vault]>=3.1.0.dev0,<4`). maas-model 3.1.0 is the first release with the
   vault client, and the `vault` extra installs `hvac`. The `.dev0` in the bound lets pip
