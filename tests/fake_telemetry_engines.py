@@ -34,3 +34,17 @@ class FakeFailing(Engine):
     def run(self, routing_key, payload):
         raise CannotProcessMessageException("nope")
         yield  # pylint: disable=unreachable
+
+
+class FakeUndeclaredExchange(Engine):
+    """reports two ids on an exchange the configuration does not declare"""
+
+    ENGINE_ID = "FAKE_UNDECLARED"
+
+    def run(self, routing_key, payload):
+        yield EngineReport(
+            action="next.rk",
+            data_ids=["u", "v"],
+            document_class="Doc",
+            exchange="undeclared-exchange",
+        )

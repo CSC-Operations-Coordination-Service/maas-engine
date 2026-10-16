@@ -346,7 +346,12 @@ class MaasEngineConsumer(MaasConsumerMixin):
 
             # count what each engine reports, before the merge changes the reports
             for report in responses:
-                report_exchange = report.exchange or "etl-exchange"
+                # the exchange report_exchange() publishes on, without its warning
+                report_exchange = (
+                    report.exchange
+                    if report.exchange in self.amqp_settings.exchanges
+                    else "etl-exchange"
+                )
                 metrics.ENGINE_REPORTS_DOCUMENTS.add(
                     len(report.data_ids),
                     {
