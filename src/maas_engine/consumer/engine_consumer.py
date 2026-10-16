@@ -14,6 +14,7 @@ from opensearchpy.exceptions import OpenSearchException, ImproperlyConfigured
 import kombu
 
 import maas_model
+from maas_model.telemetry import amqp, span
 
 from maas_engine.cli.log import setup_logging
 import maas_engine.cli.args as engine_args
@@ -110,109 +111,122 @@ class MaasEngineConsumer(MaasConsumerMixin):
 
         routing_key = message.delivery_info["routing_key"]
 
-        if not isinstance(body, dict):
-            self.logger.error("MSG body is not a dictionnary: rejecting '%s'", body)
-            message.reject()
-            return
+        with amqp.consume_span(
+            message,
+            queue=telemetry.queue_name(self.amqp_settings, exchange_name, routing_key),
+            body=body,
+        ) as scope:
+            if not isinstance(body, dict):
+                self.logger.error("MSG body is not a dictionnary: rejecting '%s'", body)
+                scope.outcome("reject", "invalid_body")
+                message.reject()
+                return
 
-        # CRIT
-        message_id = body.get("message_id", "noid")
-
-        self.logger.info(
-            "MSG %s RECEIVED FROM %s/%s ancestors: %s pipeline: %s",
-            message_id,
-            exchange_name,
-            routing_key,
-            body.get("ancestor_ids", "N/A"),
-            body.get("pipeline", "N/A"),
-        )
-
-        if self.should_stop:
-            self.logger.info("MaasEngine is exiting: not consuming anymore.")
-            return
-
-        # pylint: disable=W0718
-        # catching any error is justified by the design of the on_start_message() method
-        # that shall absolutely succeed before doing anything, otherwise requeue.
-        try:
-            self.on_start_message(body, message)
-        except Exception as error:
-            self.logger.exception(error)
-            message.requeue()
-            return
-        # pylint: enable=W0718
-
-        try:
-            # setup db
-
-            # execute pipeline to get reports
-            reports = self._execute_engines(routing_key, body)
-
-        except maas_engine.exceptions.HandleMessageException as hme:
-            self.logger.warning(
-                "MSG %s REQUEUE due to previous error: %s", message_id, hme
-            )
-            # requeue the whole message on expected error like conflicts
-            message.requeue()
-
-        except (OpenSearchException, ImproperlyConfigured) as es_error:
-            self.logger.error(
-                "MSG %s REQUEUE due to opensearch error: %s with payload %s",
-                message_id,
-                es_error,
-                body,
-            )
-            # requeue the whole message
-            message.requeue()
-
-        except maas_engine.exceptions.CannotProcessMessageException as cpme:
-            # deliberately separate from except Exception block
-            self.logger.exception(
-                "MSG %s NORMAL_REJECTION due to previous error: %s with payload %s",
-                message_id,
-                cpme,
-                body,
-            )
-            message.reject()
-
-        except Exception as exception:  # pylint: disable=W0703
-            self.logger.exception(
-                "MSG %s ABNORMAL_REJECTION due to previous error: %s with payload %s",
-                message_id,
-                exception,
-                body,
-            )
-            message.reject()
-
-        else:
-            pipeline = body.get("pipeline", []) + self.current_pipeline
-            # send reports before ACK
-            if reports:
-                # generate the list of indentifiers of ancestor messages
-                ancestor_ids = body.get("ancestor_ids", []) + [body["message_id"]]
-
-                self.notify_reports(
-                    self.amqp_settings.exchanges["etl-exchange"],
-                    reports,
-                    message.properties.get(
-                        "priority", round(self.args.amqp_max_priority / 2)
-                    ),
-                    ancestor_ids=ancestor_ids,
-                    pipeline=pipeline,
-                    force=body.get("force", True),
-                )
+            # CRIT
+            message_id = body.get("message_id", "noid")
 
             self.logger.info(
-                "MSG %s ACK %s Completed pipeline: %s",
+                "MSG %s RECEIVED FROM %s/%s ancestors: %s pipeline: %s",
                 message_id,
+                exchange_name,
                 routing_key,
-                pipeline,
+                body.get("ancestor_ids", "N/A"),
+                body.get("pipeline", "N/A"),
             )
 
-            message.ack()
+            if self.should_stop:
+                self.logger.info("MaasEngine is exiting: not consuming anymore.")
+                scope.outcome("requeue", "stopping")
+                return
 
-        finally:
-            self.on_end_message(body, message)
+            # pylint: disable=W0718
+            # catching any error is justified by the design of the on_start_message() method
+            # that shall absolutely succeed before doing anything, otherwise requeue.
+            try:
+                self.on_start_message(body, message)
+            except Exception as error:
+                self.logger.exception(error)
+                scope.outcome("requeue", "start_failed")
+                message.requeue()
+                return
+            # pylint: enable=W0718
+
+            try:
+                # setup db
+
+                # execute pipeline to get reports
+                reports = self._execute_engines(routing_key, body)
+
+            except maas_engine.exceptions.HandleMessageException as hme:
+                self.logger.warning(
+                    "MSG %s REQUEUE due to previous error: %s", message_id, hme
+                )
+                # requeue the whole message on expected error like conflicts
+                scope.outcome("requeue", "retryable")
+                message.requeue()
+
+            except (OpenSearchException, ImproperlyConfigured) as es_error:
+                self.logger.error(
+                    "MSG %s REQUEUE due to opensearch error: %s with payload %s",
+                    message_id,
+                    es_error,
+                    body,
+                )
+                # requeue the whole message
+                scope.outcome("requeue", "opensearch")
+                message.requeue()
+
+            except maas_engine.exceptions.CannotProcessMessageException as cpme:
+                # deliberately separate from except Exception block
+                self.logger.exception(
+                    "MSG %s NORMAL_REJECTION due to previous error: %s with payload %s",
+                    message_id,
+                    cpme,
+                    body,
+                )
+                scope.outcome("reject", "normal")
+                message.reject()
+
+            except Exception as exception:  # pylint: disable=W0703
+                self.logger.exception(
+                    "MSG %s ABNORMAL_REJECTION due to previous error: %s with payload %s",
+                    message_id,
+                    exception,
+                    body,
+                )
+                scope.outcome("reject", "abnormal")
+                message.reject()
+
+            else:
+                pipeline = body.get("pipeline", []) + self.current_pipeline
+                # send reports before ACK
+                if reports:
+                    # generate the list of indentifiers of ancestor messages
+                    ancestor_ids = body.get("ancestor_ids", []) + [body["message_id"]]
+
+                    self.notify_reports(
+                        self.amqp_settings.exchanges["etl-exchange"],
+                        reports,
+                        message.properties.get(
+                            "priority", round(self.args.amqp_max_priority / 2)
+                        ),
+                        ancestor_ids=ancestor_ids,
+                        pipeline=pipeline,
+                        force=body.get("force", True),
+                    )
+
+                self.logger.info(
+                    "MSG %s ACK %s Completed pipeline: %s",
+                    message_id,
+                    routing_key,
+                    pipeline,
+                )
+
+                scope.outcome("ack", "normal")
+                message.ack()
+
+            finally:
+                self.on_end_message(body, message)
 
     def on_start_message(self, body: Dict[str, Any], message: kombu.Message) -> None:
         """
@@ -223,15 +237,16 @@ class MaasEngineConsumer(MaasConsumerMixin):
             message (kombu.Message): message
         """
 
-        self.logger.debug("on_start_message: create connection to opensearch")
-        self.db_connection = db_connections.create_connection(
-            hosts=[self.args.es_url],
-            retry_on_timeout=True,
-            max_retries=self.args.es_retries,
-            timeout=self.args.es_timeout,
-            verify_certs=not self.args.es_ignore_certs_verification,
-            ssl_show_warn=not self.args.es_ignore_certs_verification,
-        )
+        with span("opensearch.connect"):
+            self.logger.debug("on_start_message: create connection to opensearch")
+            self.db_connection = db_connections.create_connection(
+                hosts=[self.args.es_url],
+                retry_on_timeout=True,
+                max_retries=self.args.es_retries,
+                timeout=self.args.es_timeout,
+                verify_certs=not self.args.es_ignore_certs_verification,
+                ssl_show_warn=not self.args.es_ignore_certs_verification,
+            )
 
     def on_end_message(self, body: Dict[str, Any], message: kombu.Message) -> None:
         """
