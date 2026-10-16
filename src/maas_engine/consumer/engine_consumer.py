@@ -327,6 +327,34 @@ class MaasEngineConsumer(MaasConsumerMixin):
         """
         self.logger.error("***** %s : %s", routing_key, str(exception))
 
+    def report_exchange(
+        self, report: EngineReport, default: kombu.Exchange
+    ) -> kombu.Exchange:
+        """exchange a report is published on
+
+        Args:
+            report (EngineReport): report to send
+            default (kombu.Exchange): used when the report names no exchange, or one
+                the configuration does not declare
+
+        Returns:
+            kombu.Exchange: the exchange the report names, else the default
+        """
+        if not report.exchange:
+            return default
+
+        exchange = self.amqp_settings.exchanges.get(report.exchange)
+        if exchange is None:
+            self.logger.warning(
+                "Exchange %s of report %s is not declared in the configuration: "
+                "using %s",
+                report.exchange,
+                report.action,
+                default.name,
+            )
+            return default
+        return exchange
+
     def notify_reports(
         self,
         exchange: str,
@@ -345,7 +373,7 @@ class MaasEngineConsumer(MaasConsumerMixin):
 
         for report in EngineReport.split_reports(reports):
             self.notify_report(
-                exchange,
+                self.report_exchange(report, exchange),
                 report,
                 priority,
                 ancestor_ids=ancestor_ids,

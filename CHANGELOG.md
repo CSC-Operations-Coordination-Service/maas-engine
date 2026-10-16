@@ -1,5 +1,18 @@
 # Changelog
 
+## Version 3.2.0
+
+- `QueryEngine` honours `output_document_class`: the reports carry that class, and their
+  `document_indices` are dropped so the consumer reads the class's own index.
+- Reports carry an `exchange`. A raw routing key (containing `raw`) goes to
+  `collect-exchange` when the engine's config declares that exchange. Otherwise the
+  report goes to `etl-exchange` and a warning is logged.
+- A `QUERY_ENGINE` service must declare `collect-exchange` in its `amqp` list to replay
+  raw data.
+- Set `output_routing_key` whenever `output_document_class` is set. Without it, the
+  report keeps the scanned class's action under the new class.
+- maas-engine now requires maas-model 3.2.0.
+
 ## Version 3.1.0
 
 - The OpenSearch and AMQP connections can be read from OpenBao or HashiCorp Vault. Set
