@@ -13,6 +13,7 @@ from maas_engine.cli.args import (
     get_amqp_credentials_url,
     get_es_credentials_url,
 )
+from maas_engine.consumer import telemetry as engine_telemetry
 from maas_engine.consumer.amqp_settings import AMQPSettings
 from maas_engine.consumer.engine_consumer import MaasEngineConsumer
 from maas_engine.update import migration
@@ -232,9 +233,19 @@ def test_consumer_connects_with_the_vault_connections(vault_env):
 
     vault_env.setattr(MaasEngineConsumer, "setup", fake_setup)
     vault_env.setattr(MaasEngineConsumer, "run", lambda self: None)
+    # main() would configure real OTLP exporters when the test env enables telemetry
+    vault_env.delenv("MAAS_TELEMETRY", raising=False)
+    enabled = []
+    setup_telemetry = engine_telemetry.setup_telemetry
+    vault_env.setattr(
+        engine_telemetry,
+        "setup_telemetry",
+        lambda args: enabled.append(setup_telemetry(args)) or enabled[-1],
+    )
 
     MaasEngineConsumer.main([])
 
+    assert enabled == [False]
     assert started[0].args.es_url == ES_URL
     assert started[0].args.amqp_url == AMQP_URL
 
