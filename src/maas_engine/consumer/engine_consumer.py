@@ -18,6 +18,7 @@ import maas_model
 from maas_engine.cli.log import setup_logging
 import maas_engine.cli.args as engine_args
 import maas_engine.exceptions
+from maas_engine.consumer import telemetry
 from maas_engine.consumer.consumer_mixin import MaasConsumerMixin
 from maas_engine.consumer.amqp_settings import AMQPSettings
 from maas_engine.engine.base import Engine, EngineSession, EngineReport
@@ -469,6 +470,8 @@ class MaasEngineConsumer(MaasConsumerMixin):
 
         setup_logging(loglevel=namespace.loglevel)
 
+        telemetry.setup_telemetry(namespace)
+
         # dump some system info
         logging.info("Starting maas-engine %s", maas_engine.__version__)
 
@@ -485,5 +488,10 @@ class MaasEngineConsumer(MaasConsumerMixin):
         # setup resources
         consumer.setup()
 
+        telemetry.declare_topology(consumer.amqp_settings)
+
         # run the listening loop
-        consumer.run()
+        try:
+            consumer.run()
+        finally:
+            telemetry.shutdown()

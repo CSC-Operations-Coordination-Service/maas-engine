@@ -13,6 +13,7 @@ from maas_engine.cli.args import (
     get_amqp_credentials_url,
     get_es_credentials_url,
 )
+from maas_engine.consumer.amqp_settings import AMQPSettings
 from maas_engine.consumer.engine_consumer import MaasEngineConsumer
 from maas_engine.update import migration
 from maas_engine.update.migration import MaasMigrator, migration_main
@@ -224,7 +225,12 @@ def test_consumer_connects_with_the_vault_connections(vault_env):
     vault_env.setenv("ES_VAULT_PATH", "maas/cds/opensearch")
     vault_env.setenv("AMQP_VAULT_PATH", "maas/cds/amqp")
     started = []
-    vault_env.setattr(MaasEngineConsumer, "setup", lambda self: started.append(self))
+
+    def fake_setup(self):
+        self.amqp_settings = AMQPSettings(AMQP_URL)
+        started.append(self)
+
+    vault_env.setattr(MaasEngineConsumer, "setup", fake_setup)
     vault_env.setattr(MaasEngineConsumer, "run", lambda self: None)
 
     MaasEngineConsumer.main([])

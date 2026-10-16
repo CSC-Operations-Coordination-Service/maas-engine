@@ -619,6 +619,16 @@ def engine_parser() -> ArgumentParser:
         type=str,
     )
 
+    # not EnvDefault: bool("false") is True, MAAS_TELEMETRY is read by the library
+    parser.add_argument(
+        "--telemetry",
+        dest="telemetry",
+        action="store_true",
+        default=False,
+        help="Send OpenTelemetry traces and metrics (or set MAAS_TELEMETRY) "
+        "(default: %(default)s)",
+    )
+
     parser.add_argument(
         "--healthcheck-hostname",
         dest="healthcheck_hostname",

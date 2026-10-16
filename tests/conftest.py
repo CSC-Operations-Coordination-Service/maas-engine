@@ -10,6 +10,7 @@ Read more about conftest.py under:
 import pytest
 
 from maas_model.testing.fakevault import FakeVault
+from maas_model.telemetry.testing import telemetry_capture  # noqa: F401
 
 
 @pytest.fixture

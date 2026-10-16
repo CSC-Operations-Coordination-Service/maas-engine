@@ -11,7 +11,7 @@ import importlib
 import json
 import logging
 import os
-from typing import Any, ClassVar, Dict, Iterator, List, Optional, Type
+from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple, Type
 from types import ModuleType
 
 from maas_model import MAASDocument, MAASMessage, MAASBaseMessage
@@ -65,6 +65,10 @@ class Engine(ABC):
 
     # stores all engines indexed by ENGINE_ID
     __ALL_ENGINES: ClassVar[Dict[str, Type["Engine"]]] = {}
+
+    # (exchange, routing_key) pairs this engine declares it publishes, used to
+    # declare the telemetry topology
+    OUTPUT_ROUTES: ClassVar[Tuple[Tuple[str, str], ...]] = ()
 
     # module containing model referenced in the configuration file
     MODEL_MODULE: ClassVar[ModuleType]
@@ -232,6 +236,11 @@ class Engine(ABC):
             Document: DAO class
         """
         return getattr(cls.MODEL_MODULE, model_name)
+
+    @classmethod
+    def registered(cls) -> Dict[str, Type["Engine"]]:
+        """Copy of the registry of all engines indexed by ENGINE_ID"""
+        return dict(Engine.__ALL_ENGINES)
 
     @classmethod
     def __init_subclass__(cls, **kwargs):
