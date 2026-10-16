@@ -7,11 +7,15 @@ from types import SimpleNamespace
 from unittest import mock
 
 import pytest
+import opensearchpy.connection.connections as db_connections
 from opensearchpy.exceptions import OpenSearchException
+from opentelemetry.trace import StatusCode
+from maas_model.telemetry import amqp as _amqp  # noqa: F401
+from maas_model import telemetry
 
 from maas_engine.consumer.engine_consumer import MaasEngineConsumer
 from maas_engine.consumer.telemetry import queue_name
-from maas_engine.engine.base import Engine
+from maas_engine.engine.base import Engine, EngineReport
 from maas_engine.exceptions import (
     CannotProcessMessageException,
     HandleMessageException,
@@ -19,6 +23,9 @@ from maas_engine.exceptions import (
 
 # registers QUERY_ENGINE, used by CONFIG
 import maas_engine.engine.query  # noqa: F401  pylint: disable=unused-import
+
+# registers FAKE_A, FAKE_B and FAKE_FAIL
+import fake_telemetry_engines  # noqa: F401  pylint: disable=unused-import
 
 URL = "amqp://guest:guest@localhost:5672//"
 EXCHANGE = "etl-exchange"
@@ -185,3 +192,151 @@ def test_disabled_on_message_unchanged(consumer, message, caplog):
         f"MSG m1 RECEIVED FROM {EXCHANGE}/{ROUTING_KEY} ancestors: N/A pipeline: N/A",
         f"MSG m1 ACK {ROUTING_KEY} Completed pipeline: []",
     ]
+
+
+# --- folded-in gaps of the on_message review ---
+
+
+@pytest.mark.parametrize("failing", ["notify_reports", "publish"])
+def test_exception_in_success_branch(telemetry_capture, consumer, message, failing):
+    consumer._execute_engines = mock.Mock(
+        return_value=[EngineReport(action="a", data_ids=["1"])]
+    )
+    if failing == "notify_reports":
+        consumer.notify_reports = mock.Mock(side_effect=RuntimeError("boom"))
+    else:
+        consumer.producer.publish.side_effect = RuntimeError("boom")
+    with pytest.raises(RuntimeError, match="boom"):
+        consumer.on_message(BODY, message)
+    point = telemetry_capture.point(
+        "maas.messages.consumed", outcome="error", reason="exception"
+    )
+    assert point.value == 1
+    consumer.on_end_message.assert_called_once()
+
+
+def test_start_failure_through_real_connect_span(
+    telemetry_capture, consumer, message, monkeypatch
+):
+    del consumer.on_start_message  # use the real method
+    consumer.args.es_url = "http://localhost:9200"
+    consumer.args.es_retries = 1
+    consumer.args.es_timeout = 1
+    consumer.args.es_ignore_certs_verification = True
+    monkeypatch.setattr(
+        db_connections, "create_connection", mock.Mock(side_effect=RuntimeError("x"))
+    )
+    consumer.on_message(BODY, message)
+    point = telemetry_capture.point(
+        "maas.messages.consumed", outcome="requeue", reason="start_failed"
+    )
+    assert point.value == 1
+    connect = telemetry_capture.span("opensearch.connect")
+    assert connect.status.status_code == StatusCode.ERROR
+    message.requeue.assert_called_once()
+
+
+def test_queue_label_on_consumed_point(telemetry_capture, consumer, message, queue):
+    consumer._execute_engines = mock.Mock(return_value=[])
+    consumer.on_message(BODY, message)
+    point = telemetry_capture.point("maas.messages.consumed", outcome="ack")
+    assert point.attributes["queue"] == queue
+
+
+# --- per-engine run, reports, observed routes, headers, returns ---
+
+
+def map_engines(consumer, *engine_ids):
+    consumer.amqp_settings.event_mapping[ROUTING_KEY] = list(engine_ids)
+
+
+def valid_body(**extra):
+    return {
+        "message_id": "m1",
+        "document_class": "Doc",
+        "document_ids": ["a", "b"],
+        **extra,
+    }
+
+
+def test_end_to_end_trace(telemetry_capture, consumer, message, queue):
+    map_engines(consumer, "FAKE_A")
+    with telemetry.span("collect.file"):
+        with telemetry.amqp.publish_span(
+            "collect-exchange", ROUTING_KEY
+        ) as headers:
+            pass
+    message.headers = headers
+    consumer.on_message(valid_body(), message)
+
+    proc = telemetry_capture.span(f"process {queue}")
+    run = telemetry_capture.span("engine.run FAKE_A")
+    engine_pub = telemetry_capture.span(f"publish {EXCHANGE}")
+    collector_pub = telemetry_capture.span("publish collect-exchange")
+    assert proc.parent.span_id == collector_pub.context.span_id
+    assert run.parent.span_id == proc.context.span_id
+    assert run.attributes["maas.reports.count"] == 1
+    assert run.attributes["maas.documents.input"] == 2
+    assert engine_pub.context.trace_id == proc.context.trace_id
+    assert "traceparent" in consumer.producer.publish.call_args.kwargs["headers"]
+    point = telemetry_capture.point(
+        "maas.engine.run.duration", node="FAKE_A", outcome="ok"
+    )
+    assert point.count == 1
+
+
+def test_reports_counted_per_engine_before_merge(
+    telemetry_capture, consumer, message
+):
+    map_engines(consumer, "FAKE_A", "FAKE_B")
+    consumer.on_message(valid_body(), message)
+
+    for node, count in (("FAKE_A", 2), ("FAKE_B", 3)):
+        point = telemetry_capture.point(
+            "maas.engine.reports.documents",
+            node=node,
+            exchange=EXCHANGE,
+            routing_key="next.rk",
+        )
+        assert point.value == count
+        routes = telemetry_capture.points("maas.topology.route_info")
+        assert any(
+            p.attributes.get("node") == node
+            and p.attributes.get("source") == "observed"
+            and p.attributes.get("direction") == "out"
+            for p in routes
+        )
+    consumer.producer.publish.assert_called_once()
+
+
+def test_engine_error_outcome(telemetry_capture, consumer, message):
+    map_engines(consumer, "FAKE_FAIL")
+    consumer.on_message(valid_body(), message)
+
+    point = telemetry_capture.point(
+        "maas.engine.run.duration", node="FAKE_FAIL", outcome="error"
+    )
+    assert point.count == 1
+    assert (
+        telemetry_capture.point(
+            "maas.messages.consumed", outcome="reject", reason="normal"
+        ).value
+        == 1
+    )
+
+
+def test_return_counted(telemetry_capture, consumer):
+    consumer.handle_message_return(
+        Exception(312, "NO_ROUTE"), EXCHANGE, "rk", None
+    )
+    point = telemetry_capture.point("maas.messages.returned", reason="NO_ROUTE")
+    assert point.value == 1
+
+
+def test_disabled_publish_headers_empty(consumer, message):
+    map_engines(consumer, "FAKE_A")
+    consumer.on_message(valid_body(), message)
+    kwargs = consumer.producer.publish.call_args.kwargs
+    assert kwargs["headers"] == {}
+    body = consumer.producer.publish.call_args.args[0]
+    assert json.loads(body)["document_ids"] == ["x", "y"]

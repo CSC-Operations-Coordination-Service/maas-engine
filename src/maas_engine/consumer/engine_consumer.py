@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import signal
+from time import perf_counter
 from typing import Any, Dict, List, Optional
 
 from opensearchpy.connection import Connection as OpenSearchConnection
@@ -14,7 +15,7 @@ from opensearchpy.exceptions import OpenSearchException, ImproperlyConfigured
 import kombu
 
 import maas_model
-from maas_model.telemetry import amqp, span
+from maas_model.telemetry import activity, amqp, metrics, span, topology
 
 from maas_engine.cli.log import setup_logging
 import maas_engine.cli.args as engine_args
@@ -315,11 +316,54 @@ class MaasEngineConsumer(MaasConsumerMixin):
             # allow partial run by configuration
             # better break and reject for safety ?
 
-            responses: List[EngineReport] = [
-                report
-                for report in engine.run(routing_key, engine.payload)
-                if engine.send_reports
-            ]
+            started = perf_counter()
+            outcome = "error"
+            try:
+                with span(
+                    f"engine.run {engine.ENGINE_ID}",
+                    attributes={
+                        "maas.engine.id": engine.ENGINE_ID,
+                        "maas.engine.class": type(engine).__name__,
+                        "maas.documents.input": len(body.get("document_ids") or []),
+                    },
+                ) as run_span, activity("engine", engine.ENGINE_ID):
+                    responses: List[EngineReport] = [
+                        report
+                        for report in engine.run(routing_key, engine.payload)
+                        if engine.send_reports
+                    ]
+                    run_span.set_attribute("maas.reports.count", len(responses))
+                outcome = "ok"
+            finally:
+                metrics.ENGINE_RUN_DURATION.record(
+                    perf_counter() - started,
+                    {
+                        "node": engine.ENGINE_ID,
+                        "routing_key": routing_key,
+                        "outcome": outcome,
+                    },
+                )
+
+            # count what each engine reports, before the merge changes the reports
+            for report in responses:
+                report_exchange = report.exchange or "etl-exchange"
+                metrics.ENGINE_REPORTS_DOCUMENTS.add(
+                    len(report.data_ids),
+                    {
+                        "node": engine.ENGINE_ID,
+                        "exchange": report_exchange,
+                        "routing_key": report.action,
+                    },
+                )
+                topology.declare_route(
+                    direction="out",
+                    node_type="engine",
+                    node=engine.ENGINE_ID,
+                    exchange=report_exchange,
+                    routing_key=report.action,
+                    document_class=report.document_class,
+                    source="observed",
+                )
 
             self.current_pipeline.append(engine.ENGINE_ID)
 
@@ -342,6 +386,15 @@ class MaasEngineConsumer(MaasConsumerMixin):
         See : https://docs.celeryproject.org/projects/kombu/en/v5.1.0/reference/kombu.html#message-producer
         """
         self.logger.error("***** %s : %s", routing_key, str(exception))
+        amqp.returned(
+            exchange,
+            routing_key,
+            (
+                "NO_ROUTE"
+                if getattr(exception, "args", (None, None))[1:2] == ("NO_ROUTE",)
+                else "other"
+            ),
+        )
 
     def report_exchange(
         self, report: EngineReport, default: kombu.Exchange
@@ -436,22 +489,33 @@ class MaasEngineConsumer(MaasConsumerMixin):
         if pipeline:
             msg.pipeline = pipeline
 
-        self.producer.publish(
-            json.dumps(msg.to_dict()),
-            content_type="application/json",
-            exchange=exchange.name,
-            routing_key=report.action,
-            delivery_mode="persistent",
-            mandatory=True,
-            priority=priority,
-            retry=True,
-            retry_policy={
-                "interval_start": 0,  # First retry immediately,
-                "interval_step": 2,  # then increase by 2s for every retry.
-                "interval_max": 30,  # but don't exceed 30s between retries.
-                "max_retries": self.args.amqp_retries,  # give up after X tries.
-            },
-        )
+        body = json.dumps(msg.to_dict())
+
+        with amqp.publish_span(
+            exchange.name,
+            report.action,
+            message_id=msg.message_id,
+            document_count=len(report.data_ids),
+            document_class=report.document_class,
+            body_size=len(body),
+        ) as headers:
+            self.producer.publish(
+                body,
+                content_type="application/json",
+                exchange=exchange.name,
+                routing_key=report.action,
+                delivery_mode="persistent",
+                mandatory=True,
+                priority=priority,
+                retry=True,
+                retry_policy={
+                    "interval_start": 0,  # First retry immediately,
+                    "interval_step": 2,  # then increase by 2s for every retry.
+                    "interval_max": 30,  # but don't exceed 30s between retries.
+                    "max_retries": self.args.amqp_retries,  # give up after X tries.
+                },
+                headers=headers,
+            )
 
     def exit_gracefully(self, signum, frame):
         """
