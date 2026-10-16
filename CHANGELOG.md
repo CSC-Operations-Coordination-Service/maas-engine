@@ -2,6 +2,25 @@
 
 ## Version 3.2.0
 
+- The engines can send OpenTelemetry traces and metrics over OTLP, with `--telemetry` or
+  `MAAS_TELEMETRY=1` and the new `telemetry` extra (`pip install "maas-engine[telemetry]"`).
+  It is off by default, and the engine then behaves, logs, acknowledges and publishes as
+  before. The destination and identity come from `OTEL_EXPORTER_OTLP_ENDPOINT`,
+  `OTEL_EXPORTER_OTLP_PROTOCOL`, `MAAS_DEPLOYMENT` and `MAAS_INSTANCE_ID`, the same as
+  the collectors. A `process <queue>` span continues the producer's trace from the AMQP
+  headers, the body being untouched, and holds `opensearch.connect`,
+  `engine.run <ENGINE_ID>`, `engine.load_input`, `engine.bulk`, the OpenSearch requests,
+  including those of the `parallel_bulk` threads, and the `publish <exchange>` of the
+  reports. Every message gets an outcome (`ack`, `requeue`, `reject`) and a reason.
+  The metrics cover consumed messages, processing and run durations, documents written,
+  input and missing documents, reported documents, published and returned reports and
+  the OpenSearch time per engine. The flow-map topology is declared from the `amqp`
+  configuration (in-routes and nodes), from the reports seen at run time (observed
+  out-routes), and from an optional `OUTPUT_ROUTES` class attribute. The statistics log
+  line is unchanged. See `docs/telemetry.md`.
+- `maas_publish_message` marks the messages it publishes with the header
+  `maas.replay=true`.
+
 - `QueryEngine` honours `output_document_class`: the reports carry that class, and their
   `document_indices` are dropped so the consumer reads the class's own index.
 - Reports carry an `exchange`. A raw routing key (containing `raw`) goes to

@@ -12,6 +12,7 @@ Configuration <configuration>
 maas_migrate <maas_migrate>
 maas_engine_cli <maas_engine_cli>
 Connections from the vault <vault>
+Telemetry <telemetry>
 Queue utilities <queue_utils>
 Performance Guide <performance_guide>
 Contributions & Help <contributing>

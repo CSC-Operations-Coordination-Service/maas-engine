@@ -20,7 +20,8 @@ usage: __main__.py [-h] [-v] [-vv] [--es-username ES_USERNAME] [--es-password ES
                    [--vault-kv-mount VAULT_KV_MOUNT] [--vault-auth-method {approle,token}]
                    [--vault-role-id VAULT_ROLE_ID] [--vault-secret-id-file VAULT_SECRET_ID_FILE]
                    [--vault-token-file VAULT_TOKEN_FILE] [-f] [--version] [-c CONFIG]
-                   [-d CONFIG_DIRECTORY] [--healthcheck-hostname HEALTHCHECK_HOSTNAME]
+                   [-d CONFIG_DIRECTORY] [--telemetry]
+                   [--healthcheck-hostname HEALTHCHECK_HOSTNAME]
                    [--healthcheck-port HEALTHCHECK_PORT]
 
 options:
@@ -79,6 +80,8 @@ options:
                         Configuration path (default: None)
   -d CONFIG_DIRECTORY, --config-directory CONFIG_DIRECTORY
                         Configuration directory (default: None)
+  --telemetry           Send OpenTelemetry traces and metrics (or set MAAS_TELEMETRY)
+                        (default: False)
   --healthcheck-hostname HEALTHCHECK_HOSTNAME
                         Health check host name (default: 0.0.0.0)
   --healthcheck-port HEALTHCHECK_PORT
@@ -111,6 +114,22 @@ messages, so **the value must exceed the longest time one message can block
 the consume loop**. Otherwise the broker drops the connection mid-processing,
 and the message is redelivered once the engine reconnects. Set `0` to restore
 the previous behaviour (no heartbeat).
+
+## Telemetry
+
+`--telemetry` / `MAAS_TELEMETRY=1` sends OpenTelemetry traces and metrics over OTLP. It
+is off by default and needs the `telemetry` extra (`pip install "maas-engine[telemetry]"`).
+The destination and the identity come from `OTEL_EXPORTER_OTLP_ENDPOINT`,
+`OTEL_EXPORTER_OTLP_PROTOCOL`, `MAAS_DEPLOYMENT` and `MAAS_INSTANCE_ID`.
+
+Each message gets a `process <queue>` span that continues the producer's trace from the
+AMQP headers, with `engine.run <ENGINE_ID>`, `engine.load_input`, `engine.bulk`, the
+OpenSearch requests and the `publish <exchange>` of the reports below it. The metrics
+cover consumed messages by outcome and reason, run durations, documents written and
+reported, missing input and the OpenSearch time per engine; the flow-map topology comes
+from the `amqp` configuration, the reports seen and the optional `OUTPUT_ROUTES` of an
+engine class. The statistics log line is unchanged. See
+[docs/telemetry.md](docs/telemetry.md).
 
 ## Connections from OpenBao / Vault
 
