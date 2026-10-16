@@ -54,6 +54,8 @@ class QueryEngine(DataEngine):
 
         # finally yield reports so they can be emitted on the bus
         for report in self._generate_reports():
+            if payload.chunk_size:
+                report.chunk_size = payload.chunk_size
             if payload.output_routing_key:
                 report.action = payload.output_routing_key
                 report.exchange = self.exchange_for(payload.output_routing_key)

@@ -4,6 +4,7 @@ from unittest import mock
 from maas_model.message import MAASQueryMessage
 
 from maas_engine.engine.query import QueryEngine
+from maas_engine.engine.report import EngineReport
 
 
 class CdsPublication:
@@ -70,3 +71,50 @@ def test_non_raw_output_routing_key_keeps_default_exchange():
     (report,) = run_query(output_routing_key="update.cds-publication-s1")
     assert report.action == "update.cds-publication-s1"
     assert report.exchange == ""
+
+
+class ThreeDocsSearch(FakeSearch):
+    def scan(self):
+        for number in "123":
+            yield CdsPublication(number, "cds-publication-2026-10")
+
+
+class ThreeDocsModel:
+    @staticmethod
+    def search():
+        return ThreeDocsSearch()
+
+
+def run_three_documents(engine_chunk_size=0, **payload_args):
+    payload = MAASQueryMessage(document_class="CdsPublication", **payload_args)
+    with mock.patch.object(
+        QueryEngine, "get_model", new=lambda obj, name: ThreeDocsModel
+    ):
+        engine = QueryEngine(chunk_size=engine_chunk_size)
+        return list(engine.run("some.key", payload))
+
+
+def test_the_message_chunk_size_reaches_the_reports():
+    (report,) = run_query(chunk_size=1)
+    assert report.chunk_size == 1
+
+
+def test_a_zero_message_chunk_size_keeps_the_engine_chunk_size():
+    (report,) = run_query(chunk_size=0)
+    assert report.chunk_size == 0
+    reports = run_three_documents(engine_chunk_size=2, chunk_size=0)
+    assert [report.chunk_size for report in reports] == [2]
+
+
+def test_chunked_raw_reports_all_keep_the_collect_exchange():
+    reports = run_three_documents(
+        chunk_size=1,
+        output_document_class="PripProduct",
+        output_routing_key="new.raw.data.prip-product",
+    )
+    chunks = list(EngineReport.split_reports(reports))
+    assert len(chunks) == 3
+    for chunk in chunks:
+        assert chunk.exchange == "collect-exchange"
+        assert chunk.document_class == "PripProduct"
+        assert chunk.document_indices == []

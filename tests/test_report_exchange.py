@@ -59,7 +59,8 @@ def publish(consumer, **report_args):
         data_ids=["a"],
         **report_args,
     )
-    consumer.notify_reports(consumer.amqp_settings.exchanges["etl-exchange"], [report], 3)
+    etl_exchange = consumer.amqp_settings.exchanges["etl-exchange"]
+    consumer.notify_reports(etl_exchange, [report], 3)
     return consumer.producer.publish.call_args
 
 
