@@ -11,13 +11,16 @@ from maas_engine.engine.base import Engine
 __all__ = ["setup_telemetry", "declare_topology", "queue_name", "shutdown"]
 
 
-def setup_telemetry(args: argparse.Namespace) -> bool:
+def setup_telemetry(args: argparse.Namespace, instance_id: str | None = None) -> bool:
     """Configure telemetry for the engine component
 
     Telemetry is enabled by --telemetry, or by MAAS_TELEMETRY read by the library.
 
     Args:
         args (argparse.Namespace): parsed command line
+        instance_id (str | None): service.instance.id, by default MAAS_INSTANCE_ID
+            or <hostname>-<pid>. A replay gives its own so that its cumulative series
+            do not collide with those of the engine whose container it runs in.
 
     Returns:
         bool: whether telemetry is enabled
@@ -27,6 +30,7 @@ def setup_telemetry(args: argparse.Namespace) -> bool:
         project="maas-engine",
         project_version=maas_engine.__version__,
         enabled=True if args.telemetry else None,
+        instance_id=instance_id,
     )
 
 

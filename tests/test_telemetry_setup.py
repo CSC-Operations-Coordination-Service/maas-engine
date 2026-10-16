@@ -118,6 +118,14 @@ def test_setup_telemetry_configures_engine(monkeypatch):
     assert kwargs["enabled"] is True
     setup_telemetry(argparse.Namespace(telemetry=False))
     assert configure.call_args.kwargs["enabled"] is None
+    assert kwargs["instance_id"] is None
+
+
+def test_setup_telemetry_passes_instance_id(monkeypatch):
+    configure = mock.Mock(return_value=True)
+    monkeypatch.setattr("maas_engine.consumer.telemetry.configure", configure)
+    setup_telemetry(argparse.Namespace(telemetry=True), instance_id="engine.1-replay-7")
+    assert configure.call_args.kwargs["instance_id"] == "engine.1-replay-7"
 
 
 def test_main_configures_declares_and_shuts_down(monkeypatch):

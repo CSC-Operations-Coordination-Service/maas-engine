@@ -141,6 +141,17 @@ declares `OUTPUT_ROUTES`.
 `publish <exchange>` span with the attribute `maas.replay=true`, which starts the trace
 of the replayed message.
 
+A replay has its own telemetry instance. It is usually run with `docker exec` inside an
+engine container, whose `MAAS_TELEMETRY`, `MAAS_DEPLOYMENT` and `MAAS_INSTANCE_ID` are
+the live engine's. If the replay pushed under the same `component`, `deployment` and
+`instance`, its cumulative series would collide with the engine's. `maas_publish_message`
+therefore sets `service.instance.id`, the `instance` label, to
+`<MAAS_INSTANCE_ID>-replay-<pid>`, for example `engine-s1.1-replay-4242`. When
+`MAAS_INSTANCE_ID` is not set, the host name stands in for it. The replay keeps the
+engine's `deployment`, so dashboards still find its series, under their own instance.
+This follows the convention of the maas-collector replays,
+`<instance id of the worker>-replay-<lane>`.
+
 ## The statistics line
 
 The statistics log line of a data engine is unchanged:

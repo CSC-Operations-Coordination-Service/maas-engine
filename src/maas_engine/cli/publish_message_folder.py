@@ -5,6 +5,7 @@ Utility to publish messages from a folder containing payload
 import json
 import os
 import pathlib
+import socket
 import sys
 import time
 import uuid
@@ -47,7 +48,11 @@ def publish_message_folder_main(args: list[str]):
 
     args = parser.parse_args(args)
 
-    setup_telemetry(args)
+    # Replays usually run by `docker exec` in an engine container, whose
+    # MAAS_INSTANCE_ID is the live engine's: give the replay its own instance so
+    # that its cumulative series do not collide with the engine's.
+    parent_instance = os.environ.get("MAAS_INSTANCE_ID") or socket.gethostname()
+    setup_telemetry(args, instance_id=f"{parent_instance}-replay-{os.getpid()}")
 
     url = engine_args.get_amqp_credentials_url(args)
 
