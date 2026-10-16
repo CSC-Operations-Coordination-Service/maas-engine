@@ -10,8 +10,10 @@ import time
 import uuid
 
 import kombu
+from maas_model import telemetry
 
 import maas_engine.cli.args as engine_args
+from maas_engine.consumer.telemetry import setup_telemetry
 
 
 def process_message(path: pathlib.Path, ack: bool, body: str, message: kombu.Message):
@@ -45,6 +47,8 @@ def publish_message_folder_main(args: list[str]):
 
     args = parser.parse_args(args)
 
+    setup_telemetry(args)
+
     url = engine_args.get_amqp_credentials_url(args)
 
     dir_path = pathlib.Path(args.folder)
@@ -56,25 +60,33 @@ def publish_message_folder_main(args: list[str]):
 
         for payload_path in dir_path.glob("*.json"):
             with open(payload_path, encoding="utf-8") as fp:
-                producer.publish(
-                    fp.read(),
-                    content_type="application/json",
-                    exchange=exchange.name,
-                    routing_key=args.routing_key,
-                    delivery_mode="persistent",
-                    mandatory=True,
-                    priority=5,
-                    retry=True,
-                    retry_policy={
-                        "interval_start": 0,  # First retry immediately,
-                        "interval_step": 2,  # then increase by 2s for every retry.
-                        "interval_max": 30,  # but don't exceed 30s between retries.
-                        "max_retries": args.amqp_retries,  # give up after X tries.
-                    },
-                )
+                with telemetry.amqp.publish_span(
+                    exchange.name,
+                    args.routing_key,
+                    attributes={"maas.replay": True},
+                    headers={"maas.replay": "true"},
+                ) as headers:
+                    producer.publish(
+                        fp.read(),
+                        content_type="application/json",
+                        exchange=exchange.name,
+                        routing_key=args.routing_key,
+                        delivery_mode="persistent",
+                        mandatory=True,
+                        priority=5,
+                        headers=headers,
+                        retry=True,
+                        retry_policy={
+                            "interval_start": 0,  # First retry immediately,
+                            "interval_step": 2,  # then increase by 2s per retry.
+                            "interval_max": 30,  # but don't exceed 30s between.
+                            "max_retries": args.amqp_retries,  # give up after X.
+                        },
+                    )
                 print(".", end="")
                 sys.stdout.flush()
 
+    telemetry.shutdown()
     print("Done")
 
 
