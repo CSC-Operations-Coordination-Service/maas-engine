@@ -12,6 +12,8 @@ from opensearchpy.connection.connections import connections as db_connections
 from opensearchpy.helpers import parallel_bulk
 
 import maas_model
+from maas_model import telemetry
+from maas_model.telemetry import metrics
 from maas_engine.engine.base import Engine, EngineReport
 from maas_engine.exceptions import CannotProcessMessageException, HandleMessageException
 
@@ -35,6 +37,9 @@ class DataEngineStatistics:
     start_timestamp: float = dataclasses.field(default_factory=time.time, init=True)
 
     end_timestamp: float = dataclasses.field(default_factory=time.time, init=True)
+
+    # engine id, used as the node label of the telemetry
+    node: str = ""
 
     @property
     def duration(self) -> float:
@@ -80,6 +85,18 @@ class DataEngineStatistics:
             self.conflicts,
             self.duration,
         )
+
+        for result, count in (
+            ("created", self.created),
+            ("updated", self.updated),
+            ("deleted", self.deleted),
+            ("error", self.errors - self.conflicts),
+            ("conflict", self.conflicts),
+        ):
+            if count > 0:
+                metrics.ENGINE_DOCUMENTS.add(
+                    count, {"node": self.node, "result": result}
+                )
 
     @staticmethod
     def get_details(info) -> dict:
@@ -150,49 +167,51 @@ class DataEngine(Engine):
         """overide"""
         # initialize input lazily
         if not self.input_documents:
-            self._load_input_documents(payload, routing_key)
+            with telemetry.span("engine.load_input"):
+                self._load_input_documents(payload, routing_key)
         else:
             self.logger.debug("Won't load input documents: reuse from session")
 
         self.input_model = self.get_input_model(payload)
 
         # store time info for performance logging
-        self._stats = DataEngineStatistics(logger=self.logger)
+        self._stats = DataEngineStatistics(logger=self.logger, node=self.ENGINE_ID)
 
         error_msg = ""
 
-        for success, info in parallel_bulk(
-            db_connections.get_connection(),
-            self.action_iterator(),
-            refresh=True,  # TODO set refresh as engine option
-            raise_on_error=False,
-            raise_on_exception=False,
-            request_timeout=self.args.es_timeout if self.args else 120,
-        ):
-            # store the action specific dict feedback
-            details = self._stats.get_details(info)
+        with telemetry.span("engine.bulk"):
+            for success, info in parallel_bulk(
+                db_connections.get_connection(),
+                self.action_iterator(),
+                refresh=True,  # TODO set refresh as engine option
+                raise_on_error=False,
+                raise_on_exception=False,
+                request_timeout=self.args.es_timeout if self.args else 120,
+            ):
+                # store the action specific dict feedback
+                details = self._stats.get_details(info)
 
-            if not details:
-                self.logger.warning("Unhandled bulk info: %s", info)
-                continue
+                if not details:
+                    self.logger.warning("Unhandled bulk info: %s", info)
+                    continue
 
-            if not success:
-                self._stats.errors += 1
+                if not success:
+                    self._stats.errors += 1
 
-                status = details.get("status", 500)
+                    status = details.get("status", 500)
 
-                if status == 409:
-                    self._stats.conflicts += 1
-                    self.logger.info("Conflict detected: %s", info)
-                else:
-                    self.logger.error("Error pushing to database: %s", info)
-                    error_msg += f"{info} "
-                continue
+                    if status == 409:
+                        self._stats.conflicts += 1
+                        self.logger.info("Conflict detected: %s", info)
+                    else:
+                        self.logger.error("Error pushing to database: %s", info)
+                        error_msg += f"{info} "
+                    continue
 
-            self._stats.update(details)
+                self._stats.update(details)
 
-            if self.send_reports:
-                self._handle_es_result_for_report(details)
+                if self.send_reports:
+                    self._handle_es_result_for_report(details)
 
         self._stats.finish()
 
@@ -249,12 +268,21 @@ class DataEngine(Engine):
         # modification is notified on the amqp bus
         self.input_documents = self.get_input_documents(payload)
 
+        labels = {
+            "node": self.ENGINE_ID,
+            "document_class": payload.document_class,
+        }
+        metrics.ENGINE_INPUT_DOCUMENTS.add(len(payload.document_ids), labels)
+
         if not all(self.input_documents):
             # this is really bad: raw documents have been deleted since the payload
             # have been sent, or the document class or identifiers are wrong !
             missing = set(payload.document_ids) - {
                 document.meta.id for document in self.input_documents if document
             }
+
+            metrics.ENGINE_INPUT_MISSING.add(len(missing), labels)
+            telemetry.set_span_attributes(**{"maas.documents.missing": len(missing)})
 
             self.logger.critical(
                 "Some input documents %s on queue %s are missing: %s",
