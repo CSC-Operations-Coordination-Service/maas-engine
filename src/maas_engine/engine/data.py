@@ -179,7 +179,11 @@ class DataEngine(Engine):
 
         error_msg = ""
 
-        with telemetry.span("engine.bulk"):
+        # parallel_bulk consumes action_iterator() in its pool threads: re-entering
+        # the activity under engine.bulk makes their OpenSearch spans hang from it
+        with telemetry.span("engine.bulk"), telemetry.activity(
+            "engine", self.ENGINE_ID
+        ):
             for success, info in parallel_bulk(
                 db_connections.get_connection(),
                 self.action_iterator(),

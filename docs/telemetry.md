@@ -60,7 +60,7 @@ collector, its message and the engine runs it triggers are therefore one trace.
 | `engine.run <ENGINE_ID>` | `process` | `maas.engine.id`, `maas.engine.class`, `maas.documents.input`, `maas.reports.count` |
 | `engine.load_input` | `engine.run` | `maas.documents.missing` when input documents are missing |
 | `engine.bulk` | `engine.run` | |
-| `opensearch <operation>` | the span current when the request is made; the bulk requests of the `parallel_bulk` threads hang from `engine.run` | `db.operation.name`, `db.collection.name`, `http.response.status_code` |
+| `opensearch <operation>` | the span current when the request is made; the bulk requests of the `parallel_bulk` threads hang from `engine.bulk` | `db.operation.name`, `db.collection.name`, `http.response.status_code` |
 | `publish <exchange>` | `process` | `messaging.*`, `maas.message_id`, `maas.document.count`, `maas.document.class` |
 
 `<queue>` is the configured queue bound to the delivery's exchange and routing key, or
@@ -108,6 +108,11 @@ The Prometheus names, as Mimir stores them. Every series also carries `component
 
 `node` is the `ENGINE_ID`. Message and document ids are span attributes only, never
 labels.
+
+`maas_engine_input_documents_total` and `maas_engine_input_missing_total` count only for
+the engine that loads the input documents of the session, the first data engine to run
+for a message. The other data engines of the same message reuse the session's input
+documents and add nothing to them.
 
 ### Topology
 

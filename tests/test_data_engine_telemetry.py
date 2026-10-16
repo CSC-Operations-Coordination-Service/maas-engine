@@ -115,12 +115,11 @@ def test_opensearch_from_bulk_pool_attributed(telemetry_capture, os_connection):
         ).value
         >= 0
     )
-    os_span = [s for s in telemetry_capture.spans() if s.name == "opensearch bulk"][0]
-    assert os_span.parent.span_id in (
-        telemetry_capture.span("engine.bulk").context.span_id,
-        telemetry_capture.span("engine.run FAKE_BULK").context.span_id,
-    )
-    telemetry_capture.span("engine.bulk")
+    # the parallel_bulk pool threads hang their requests from engine.bulk
+    os_spans = [s for s in telemetry_capture.spans() if s.name == "opensearch bulk"]
+    assert os_spans
+    bulk = telemetry_capture.span("engine.bulk")
+    assert {s.parent.span_id for s in os_spans} == {bulk.context.span_id}
     assert (
         telemetry_capture.point(
             "maas.engine.documents", node="FAKE_BULK", result="created"
@@ -147,3 +146,5 @@ def test_missing_input_counted(telemetry_capture):
         telemetry_capture.point("maas.engine.input.documents", node="FAKE_BULK").value
         == 2
     )
+    load_span = telemetry_capture.span("engine.load_input.test")
+    assert load_span.attributes["maas.documents.missing"] == 1
