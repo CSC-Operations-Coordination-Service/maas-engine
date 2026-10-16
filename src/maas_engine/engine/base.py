@@ -67,7 +67,10 @@ class Engine(ABC):
     __ALL_ENGINES: ClassVar[Dict[str, Type["Engine"]]] = {}
 
     # (exchange, routing_key) pairs this engine declares it publishes, used to
-    # declare the telemetry topology
+    # declare the telemetry topology. A tuple of 2-tuples of str, mind the outer
+    # tuple and its trailing comma for a single route:
+    #     OUTPUT_ROUTES = (("etl-exchange", "new.compute-x"),)
+    # Malformed entries are skipped with a warning naming the engine.
     OUTPUT_ROUTES: ClassVar[Tuple[Tuple[str, str], ...]] = ()
 
     # module containing model referenced in the configuration file

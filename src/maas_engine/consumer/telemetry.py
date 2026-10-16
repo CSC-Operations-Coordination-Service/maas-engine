@@ -1,6 +1,8 @@
 """Telemetry helpers of the engine: set-up and declared topology."""
 
 import argparse
+import logging
+from typing import Any
 
 from maas_model.telemetry import configure, shutdown, topology
 
@@ -8,7 +10,15 @@ import maas_engine
 from maas_engine.consumer.amqp_settings import AMQPSettings
 from maas_engine.engine.base import Engine
 
-__all__ = ["setup_telemetry", "declare_topology", "queue_name", "shutdown"]
+__all__ = [
+    "setup_telemetry",
+    "declare_topology",
+    "valid_output_routes",
+    "queue_name",
+    "shutdown",
+]
+
+LOGGER = logging.getLogger(__name__)
 
 
 def setup_telemetry(args: argparse.Namespace, instance_id: str | None = None) -> bool:
@@ -41,6 +51,7 @@ def declare_topology(amqp_settings: AMQPSettings) -> None:
         amqp_settings (AMQPSettings): exchanges, queues and event mapping
     """
     engines = Engine.registered()
+    output_routes: dict[str, list[tuple[str, str]]] = {}
     for queue in amqp_settings.queues.values():
         for event in amqp_settings.event_mapping.get(queue.routing_key, []):
             engine_id = event if isinstance(event, str) else event["id"]
@@ -61,7 +72,11 @@ def declare_topology(amqp_settings: AMQPSettings) -> None:
                 impl=f"{cls.__module__}.{cls.__qualname__}",
                 summary=topology.node_summary(cls),
             )
-            for exchange, routing_key in cls.OUTPUT_ROUTES:
+            if engine_id not in output_routes:
+                output_routes[engine_id] = valid_output_routes(
+                    engine_id, cls.OUTPUT_ROUTES
+                )
+            for exchange, routing_key in output_routes[engine_id]:
                 topology.declare_route(
                     direction="out",
                     node_type="engine",
@@ -70,6 +85,45 @@ def declare_topology(amqp_settings: AMQPSettings) -> None:
                     routing_key=routing_key,
                     source="config",
                 )
+
+
+def valid_output_routes(engine_id: str, routes: Any) -> list[tuple[str, str]]:
+    """The (exchange, routing_key) pairs of OUTPUT_ROUTES, without the bad entries
+
+    A malformed OUTPUT_ROUTES must not stop the engine, whether telemetry is on or
+    off: its bad entries are skipped with one warning naming the engine.
+
+    Args:
+        engine_id (str): ENGINE_ID of the engine class, for the warning
+        routes (Any): the engine class's OUTPUT_ROUTES
+
+    Returns:
+        list[tuple[str, str]]: the valid pairs, in order
+    """
+    try:
+        entries = list(routes)
+    except TypeError:
+        entries = [routes]
+    valid = []
+    bad = []
+    for entry in entries:
+        if (
+            isinstance(entry, (tuple, list))
+            and len(entry) == 2
+            and all(isinstance(item, str) for item in entry)
+        ):
+            valid.append((entry[0], entry[1]))
+        else:
+            bad.append(entry)
+    if bad:
+        LOGGER.warning(
+            "Engine %s: skipping malformed OUTPUT_ROUTES entries %r, expected "
+            "(exchange, routing_key) pairs of str, "
+            'like (("etl-exchange", "new.compute-x"),)',
+            engine_id,
+            bad,
+        )
+    return valid
 
 
 def queue_name(amqp_settings: AMQPSettings, exchange: str, routing_key: str) -> str:

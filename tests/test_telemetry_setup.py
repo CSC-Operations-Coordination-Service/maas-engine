@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 from unittest import mock
 
 import pytest
@@ -97,6 +98,71 @@ def test_output_routes_declared(telemetry_capture, consumer, monkeypatch):
     assert point.attributes["exchange"] == "etl-exchange"
     assert point.attributes["routing_key"] == "x.y"
     assert point.attributes["source"] == "config"
+
+
+@pytest.mark.parametrize(
+    "routes",
+    [
+        ("etl-exchange", "new.x"),  # the outer tuple is missing
+        ("ex", "rk"),  # the same, with strings of two characters
+        (("etl-exchange",),),
+        (("etl-exchange", "new.x", "extra"),),
+        (("etl-exchange", 1),),
+        None,
+        42,
+    ],
+    ids=["flat", "flat-2-chars", "1-tuple", "3-tuple", "not-str", "none", "int"],
+)
+def test_malformed_output_routes_skipped(
+    telemetry_capture, consumer, monkeypatch, caplog, routes
+):
+    query_engine = Engine.registered()["QUERY_ENGINE"]
+    monkeypatch.setattr(query_engine, "OUTPUT_ROUTES", routes)
+    with caplog.at_level(logging.WARNING):
+        declare_topology(consumer.amqp_settings)
+    out = [
+        p
+        for p in telemetry_capture.points("maas.topology.route_info")
+        if p.attributes.get("direction") == "out"
+    ]
+    assert out == []
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "QUERY_ENGINE" in warnings[0].getMessage()
+    # the in-route and the node are still declared
+    assert telemetry_capture.point("maas.node_info", node="QUERY_ENGINE")
+
+
+def test_valid_output_routes_kept_beside_malformed(
+    telemetry_capture, consumer, monkeypatch, caplog
+):
+    query_engine = Engine.registered()["QUERY_ENGINE"]
+    monkeypatch.setattr(
+        query_engine,
+        "OUTPUT_ROUTES",
+        (("etl-exchange", "x.y"), "bad", ("a",), ["etl-exchange", "x.z"]),
+    )
+    # the engine of two queues still warns once
+    consumer.amqp_settings.event_mapping["new.cds-product-s1"] = [
+        "QUERY_ENGINE",
+        "QUERY_ENGINE",
+    ]
+    with caplog.at_level(logging.WARNING):
+        declare_topology(consumer.amqp_settings)
+    keys = {
+        p.attributes["routing_key"]
+        for p in telemetry_capture.points("maas.topology.route_info")
+        if p.attributes.get("direction") == "out"
+    }
+    assert keys == {"x.y", "x.z"}
+    assert len([r for r in caplog.records if r.levelno == logging.WARNING]) == 1
+
+
+def test_malformed_output_routes_telemetry_off(consumer, monkeypatch):
+    monkeypatch.delenv("MAAS_TELEMETRY", raising=False)
+    query_engine = Engine.registered()["QUERY_ENGINE"]
+    monkeypatch.setattr(query_engine, "OUTPUT_ROUTES", ("etl-exchange", "new.x"))
+    declare_topology(consumer.amqp_settings)
 
 
 def test_queue_name(consumer):
