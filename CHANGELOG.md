@@ -1,5 +1,19 @@
 # Changelog
 
+## Version 3.2.0
+
+- New replay worker, `python -m maas_engine.replay` (or `maas_replay`): it takes replay
+  requests (an interface and a window) from RabbitMQ, runs a command as a child process
+  under a deadline, and keeps the outcome in an operation record in OpenSearch (RUNNING,
+  then DONE or FAILED). It is the "recollect" pattern of the download-manager and of the
+  maas-collector operator, once, and knows nothing about collectors: a handler class
+  named in the configuration prepares each replay and builds its command. See
+  [docs/replay.md](docs/replay.md).
+- It takes the engine's connection options, including the OpenBao ones, and its health
+  check, but not its consumer: a replay lasts hours, longer than a consumer can hold a
+  message, so a lane polls, acknowledges on receipt and holds no connection while the
+  child runs.
+
 ## Version 3.1.0
 
 - The OpenSearch and AMQP connections can be read from OpenBao or HashiCorp Vault. Set

@@ -13,6 +13,7 @@ maas_migrate <maas_migrate>
 maas_engine_cli <maas_engine_cli>
 Connections from the vault <vault>
 Queue utilities <queue_utils>
+Replay worker <replay>
 Performance Guide <performance_guide>
 Contributions & Help <contributing>
 License <license>
