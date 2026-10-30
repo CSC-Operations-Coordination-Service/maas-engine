@@ -25,7 +25,10 @@ from maas_engine.engine.base import Engine
 __all__ = [
     "CATALOGUE_INDEX",
     "CATALOGUE_INDEX_BODY",
+    "RUNNING",
+    "WAITING",
     "Catalogue",
+    "describe_model",
     "document_class_entries",
     "engine_entries",
     "new_entry",
