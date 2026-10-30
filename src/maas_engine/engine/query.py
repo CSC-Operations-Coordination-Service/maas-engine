@@ -22,6 +22,14 @@ class QueryEngine(DataEngine):
 
     PAYLOAD_MODEL: ClassVar[Type[MAASQueryMessage]] = MAASQueryMessage
 
+    # exchange of the raw data routing keys
+    REPORT_EXCHANGE_RAW = "collect-exchange"
+
+    @staticmethod
+    def exchange_for(routing_key: str) -> str:
+        """Exchange to emit on for a routing key, empty for the default one"""
+        return QueryEngine.REPORT_EXCHANGE_RAW if "raw" in routing_key else ""
+
     def __init__(self, args=None, send_reports=True, chunk_size=0, merge_reports=True):
         super().__init__(args, send_reports, chunk_size)
         self.merge_reports = merge_reports
@@ -46,8 +54,18 @@ class QueryEngine(DataEngine):
 
         # finally yield reports so they can be emitted on the bus
         for report in self._generate_reports():
+            if payload.chunk_size:
+                report.chunk_size = payload.chunk_size
             if payload.output_routing_key:
                 report.action = payload.output_routing_key
+                report.exchange = self.exchange_for(payload.output_routing_key)
+            if (
+                payload.output_document_class
+                and payload.output_document_class != payload.document_class
+            ):
+                report.document_class = payload.output_document_class
+                # mget_by_ids falls back on the class index when empty
+                report.document_indices = []
             self.reports.append(report)
             yield report
 

@@ -18,6 +18,7 @@ class EngineReport:
         action (str): name of the action the engine did. It is related to the concerned data
         data_ids (list[str]): identifier of the data that have been created/updated/deleted
         chunk_size (int): maximum data_ids length for the emitting the final message
+        exchange (str): exchange to emit on, empty means the consumer's default
 
     """
 
@@ -30,6 +31,8 @@ class EngineReport:
     chunk_size: int = 0
 
     document_indices: List[str] = field(default_factory=lambda: [])
+
+    exchange: str = ""
 
     def __str__(self):
         """format report to show only number of elements, not all identifiers
@@ -101,5 +104,7 @@ class EngineReport:
                         + report.chunk_size
                     ],
                     document_class=report.document_class,
+                    chunk_size=report.chunk_size,
                     document_indices=report.document_indices,
+                    exchange=report.exchange,
                 )

@@ -67,3 +67,22 @@ def test_initial_state_other_type():
     rde = RawDataEngine()
     rde.populate_initial_state([(23, 1), (27, 2)])
     assert rde.initial_state_dict == {}
+
+
+def test_split_report_keeps_exchange_and_chunk_size():
+    report = EngineReport(
+        "new.raw.data.prip-product",
+        ["1", "2", "3"],
+        document_class="PripProduct",
+        chunk_size=2,
+        exchange="collect-exchange",
+    )
+    chunks = list(EngineReport.split_reports([report]))
+    assert [c.exchange for c in chunks] == ["collect-exchange", "collect-exchange"]
+    assert [c.chunk_size for c in chunks] == [2, 2]
+
+
+def test_merge_reports_keeps_exchange():
+    a = EngineReport("k", ["1"], exchange="collect-exchange")
+    b = EngineReport("k", ["2"], exchange="collect-exchange")
+    assert EngineReport.merge_reports([a, b])[0].exchange == "collect-exchange"
