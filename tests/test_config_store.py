@@ -24,7 +24,11 @@ QUERY = {
         {
             "name": "etl-exchange",
             "queues": [
-                {"name": "etl-query.cds", "routing_key": "query.cds", "events": ["QUERY_ENGINE"]}
+                {
+                    "name": "etl-query.cds",
+                    "routing_key": "query.cds",
+                    "events": ["QUERY_ENGINE"],
+                }
             ],
         }
     ]
@@ -56,11 +60,18 @@ def test_put_needs_the_current_version(store):
         store.put("specific/cds-query.json", QUERY, ["query-01"], "bob", base_version=0)
 
     doc = store.put(
-        "specific/cds-query.json", QUERY, ["query-01", "query-02"], "bob", base_version=1
+        "specific/cds-query.json",
+        QUERY,
+        ["query-01", "query-02"],
+        "bob",
+        base_version=1,
     )
 
     assert doc["version"] == 2 and doc["based_on"] == 1
-    assert [d["latest"] for d in store.history("specific/cds-query.json")] == [False, True]
+    assert [d["latest"] for d in store.history("specific/cds-query.json")] == [
+        False,
+        True,
+    ]
     assert store.get("specific/cds-query.json")["services"] == ["query-01", "query-02"]
 
 
@@ -77,7 +88,9 @@ def test_put_refuses_bad_content_paths_and_services(store):
         store.put("specific/x.json", QUERY, [], "alice")
     with pytest.raises(ValueError):
         store.put("specific/x.json", QUERY, ["a b"], "alice")
-    assert store.put("default/default.json", DEFAULTS, ["*"], "alice")["services"] == ["*"]
+    assert store.put("default/default.json", DEFAULTS, ["*"], "alice")["services"] == [
+        "*"
+    ]
 
 
 def test_delete_publishes_a_tombstone_and_rollback_restores(store):
@@ -113,7 +126,10 @@ def test_reads(store):
     store.put("specific/b.json", QUERY, ["query-01"], "alice")
     store.put("default/a.json", DEFAULTS, ["*"], "alice")
 
-    assert [doc["path"] for doc in store.current()] == ["default/a.json", "specific/b.json"]
+    assert [doc["path"] for doc in store.current()] == [
+        "default/a.json",
+        "specific/b.json",
+    ]
     assert store.version("specific/b.json", 1)["author"] == "alice"
     with pytest.raises(ConfigNotFoundError):
         store.version("specific/b.json", 2)

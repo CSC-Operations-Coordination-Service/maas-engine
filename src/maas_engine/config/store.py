@@ -178,7 +178,10 @@ class EngineConfigStore:
         """
         newest: Dict[str, Dict[str, Any]] = {}
         for doc in self._search([{"term": {"latest": True}}]):
-            if doc["path"] not in newest or doc["version"] > newest[doc["path"]]["version"]:
+            if (
+                doc["path"] not in newest
+                or doc["version"] > newest[doc["path"]]["version"]
+            ):
                 newest[doc["path"]] = doc
         return [
             newest[path]

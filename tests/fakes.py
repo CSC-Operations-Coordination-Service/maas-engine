@@ -1,4 +1,4 @@
-"""In-memory stand-ins for the OpenSearch client, as far as maas_engine.config uses it"""
+"""In-memory stand-ins for the OpenSearch client, as maas_engine.config uses it"""
 
 import copy
 

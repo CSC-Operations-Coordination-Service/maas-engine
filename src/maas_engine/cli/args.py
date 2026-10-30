@@ -574,6 +574,39 @@ def log_parser() -> ArgumentParser:
     return parser
 
 
+def config_index_parser() -> ArgumentParser:
+    """parser of the configuration and catalogue index names
+
+    Returns:
+        ArgumentParser: index options parser
+    """
+    parser = ArgumentParser(add_help=False)
+
+    parser.add_argument(
+        "--config-index",
+        dest="config_index",
+        help="Engine configuration index (default: %(default)s)",
+        action=EnvDefault,
+        envvar="CONFIG_INDEX",
+        required=False,
+        type=str,
+        default="maas-engine-config",
+    )
+
+    parser.add_argument(
+        "--catalogue-index",
+        dest="catalogue_index",
+        help="Engine catalogue index (default: %(default)s)",
+        action=EnvDefault,
+        envvar="ENGINE_CATALOGUE_INDEX",
+        required=False,
+        type=str,
+        default="maas-engine-catalogue",
+    )
+
+    return parser
+
+
 def engine_parser() -> ArgumentParser:
     """common cli parser factory
 
@@ -582,7 +615,13 @@ def engine_parser() -> ArgumentParser:
     """
     parser = ArgumentParser(
         add_help=False,
-        parents=[log_parser(), es_parser(), amqp_parser(), vault_parser()],
+        parents=[
+            log_parser(),
+            es_parser(),
+            amqp_parser(),
+            vault_parser(),
+            config_index_parser(),
+        ],
     )
 
     # FIXME temporary set force to true until next release as some corner cases
@@ -617,6 +656,40 @@ def engine_parser() -> ArgumentParser:
         envvar="MAAS_ENGINE_CONFIG_DIR",
         required=False,
         type=str,
+    )
+
+    parser.add_argument(
+        "--config-backend",
+        dest="config_backend",
+        help="Where the configuration comes from: file (-c or -d) or opensearch"
+        " (the configuration index, for --config-service) (default: %(default)s)",
+        action=EnvDefault,
+        envvar="CONFIG_BACKEND",
+        required=False,
+        choices=("file", "opensearch"),
+        default="file",
+    )
+
+    parser.add_argument(
+        "--config-service",
+        dest="config_service",
+        help="Service name the configuration index serves files to",
+        action=EnvDefault,
+        envvar="CONFIG_SERVICE",
+        required=False,
+        type=str,
+    )
+
+    parser.add_argument(
+        "--config-refresh-period",
+        dest="config_refresh_period",
+        help="Seconds between two checks of the configuration index"
+        " (default: %(default)s)",
+        action=EnvDefault,
+        envvar="CONFIG_REFRESH_PERIOD",
+        required=False,
+        type=int,
+        default=300,
     )
 
     parser.add_argument(

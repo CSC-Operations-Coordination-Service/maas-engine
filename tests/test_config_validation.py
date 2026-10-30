@@ -54,7 +54,8 @@ def test_structure_problems_name_what_is_wrong():
     )
 
     assert problems == [
-        "unknown key 'engines' (expected one of amqp, modules, model, defaults, logging)",
+        "unknown key 'engines'"
+        " (expected one of amqp, modules, model, defaults, logging)",
         "exchange etl-exchange, queue q: routing_key must be a non-empty string",
         "exchange etl-exchange, queue q: an event must be an engine id or an object"
         " with an id",
