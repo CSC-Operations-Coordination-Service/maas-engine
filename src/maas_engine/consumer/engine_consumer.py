@@ -4,8 +4,10 @@ import argparse
 import json
 import logging
 import signal
+import sys
 from typing import Any, Dict, List, Optional
 
+from opensearchpy import OpenSearch
 from opensearchpy.connection import Connection as OpenSearchConnection
 from amqp import Connection
 import opensearchpy.connection.connections as db_connections
@@ -20,6 +22,7 @@ import maas_engine.cli.args as engine_args
 import maas_engine.exceptions
 from maas_engine.consumer.consumer_mixin import MaasConsumerMixin
 from maas_engine.consumer.amqp_settings import AMQPSettings
+from maas_engine.config.runtime import EXIT_CONFIG_CHANGED, ConfigRuntime
 from maas_engine.engine.base import Engine, EngineSession, EngineReport
 
 
@@ -42,6 +45,12 @@ class MaasEngineConsumer(MaasConsumerMixin):
 
         self.db_connection: OpenSearchConnection | None = None
 
+        # set when the configuration comes from the index
+        self.config_runtime: ConfigRuntime | None = None
+
+        # process exit code once the consumer stops
+        self.exit_code = 0
+
     @property
     def connection(self):
         """proxy to self.amqp_settings.connection so ConsumerMixin is happy"""
@@ -57,14 +66,21 @@ class MaasEngineConsumer(MaasConsumerMixin):
 
         """
 
-        if not (self.args.config or self.args.config_directory):
-            raise ValueError("No configuration")
+        # an environment default escapes argparse's choices
+        backend = str(getattr(self.args, "config_backend", None) or "file").lower()
+        if backend not in ("file", "opensearch"):
+            raise ValueError(f"CONFIG_BACKEND must be file or opensearch: {backend!r}")
+        if backend == "opensearch":
+            self.load_config_from_index()
+        else:
+            if not (self.args.config or self.args.config_directory):
+                raise ValueError("No configuration")
 
-        if self.args.config:
-            Engine.load_config_file(self.args.config)
+            if self.args.config:
+                Engine.load_config_file(self.args.config)
 
-        if self.args.config_directory:
-            Engine.load_config_directory(self.args.config_directory)
+            if self.args.config_directory:
+                Engine.load_config_directory(self.args.config_directory)
 
         if self.args.force:
             self.logger.info("Data update is forced")
@@ -91,6 +107,50 @@ class MaasEngineConsumer(MaasConsumerMixin):
         # connect signal to exit gracefully
         signal.signal(signal.SIGINT, self.exit_gracefully)
         signal.signal(signal.SIGTERM, self.exit_gracefully)
+
+    def load_config_from_index(self):
+        """Load the configuration the index serves to --config-service, waiting for
+        one while there is none (see maas_engine.config.runtime)"""
+        if not self.args.config_service:
+            raise ValueError("--config-backend opensearch needs --config-service")
+        if self.args.config_refresh_period < 1:
+            raise ValueError("--config-refresh-period must be 1 second or more")
+
+        client = OpenSearch(
+            hosts=[self.args.es_url],
+            retry_on_timeout=True,
+            max_retries=self.args.es_retries,
+            timeout=self.args.es_timeout,
+            verify_certs=not self.args.es_ignore_certs_verification,
+            ssl_show_warn=not self.args.es_ignore_certs_verification,
+        )
+
+        self.config_runtime = ConfigRuntime(
+            client,
+            self.args.config_service,
+            self.args.config_index,
+            self.args.catalogue_index,
+            self.args.config_refresh_period,
+        )
+        self.config_runtime.start(
+            self.args.healthcheck_hostname, self.args.healthcheck_port
+        )
+
+    def restart_for_config(self):
+        """the configuration changed: stop consuming, then exit with
+        EXIT_CONFIG_CHANGED for swarm to restart the engine on it"""
+        self.exit_code = EXIT_CONFIG_CHANGED
+        self.should_stop = True
+
+    def run(self, _tokens=1, **kwargs):
+        """consume, following the configuration index when it is the backend"""
+        if self.config_runtime is not None:
+            self.config_runtime.watch(self.restart_for_config)
+        try:
+            super().run(_tokens, **kwargs)
+        finally:
+            if self.config_runtime is not None:
+                self.config_runtime.stop()
 
     def get_consumers(self, Consumer, channel):
         """create consumer list, grouped by exchange"""
@@ -327,6 +387,34 @@ class MaasEngineConsumer(MaasConsumerMixin):
         """
         self.logger.error("***** %s : %s", routing_key, str(exception))
 
+    def report_exchange(
+        self, report: EngineReport, default: kombu.Exchange
+    ) -> kombu.Exchange:
+        """exchange a report is published on
+
+        Args:
+            report (EngineReport): report to send
+            default (kombu.Exchange): used when the report names no exchange, or one
+                the configuration does not declare
+
+        Returns:
+            kombu.Exchange: the exchange the report names, else the default
+        """
+        if not report.exchange:
+            return default
+
+        exchange = self.amqp_settings.exchanges.get(report.exchange)
+        if exchange is None:
+            self.logger.warning(
+                "Exchange %s of report %s is not declared in the configuration: "
+                "using %s",
+                report.exchange,
+                report.action,
+                default.name,
+            )
+            return default
+        return exchange
+
     def notify_reports(
         self,
         exchange: str,
@@ -345,7 +433,7 @@ class MaasEngineConsumer(MaasConsumerMixin):
 
         for report in EngineReport.split_reports(reports):
             self.notify_report(
-                exchange,
+                self.report_exchange(report, exchange),
                 report,
                 priority,
                 ancestor_ids=ancestor_ids,
@@ -459,3 +547,6 @@ class MaasEngineConsumer(MaasConsumerMixin):
 
         # run the listening loop
         consumer.run()
+
+        if consumer.exit_code:
+            sys.exit(consumer.exit_code)
