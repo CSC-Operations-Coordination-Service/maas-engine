@@ -211,3 +211,19 @@ def test_watch_calls_on_change_once(store):
     runtime.stop()
 
     assert calls == [1]
+
+
+def test_consumer_wiring():
+    # pylint: disable=import-outside-toplevel
+    import argparse
+
+    from maas_engine.consumer.engine_consumer import MaasEngineConsumer
+
+    consumer = MaasEngineConsumer(
+        argparse.Namespace(config_backend="opensearch", config_service=None)
+    )
+    with pytest.raises(ValueError, match="needs --config-service"):
+        consumer.setup()
+
+    consumer.restart_for_config()
+    assert consumer.exit_code == 75 and consumer.should_stop

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Engine configurations in OpenSearch (see [docs/engine-config.md](docs/engine-config.md)):
+  the index `maas-engine-config` keeps every version of each configuration file, tagged
+  with the services that load it (`*` for every service), with tombstones and rollbacks.
+  `maas_engine.config.store.EngineConfigStore` is its only writer; the admin CLI is
+  `python -m maas_engine.cli.config`.
+- `--config-backend opensearch` (`CONFIG_BACKEND`) with `--config-service`
+  (`CONFIG_SERVICE`): the engine loads the files the index serves to its service and
+  checks the index every `--config-refresh-period` seconds (300). A change it can load
+  makes it exit with 75 for swarm to restart it; a change it cannot load is rejected and
+  it keeps running. At startup, it falls back to the versions it last ran on when the
+  current ones cannot be loaded, and waits for a configuration, health check up, when it
+  has none. `file` stays the default.
+- Each engine service writes its entry of the `maas-engine-catalogue` index: its engines,
+  the document classes of its model, the versions it loaded and the last it rejected.
+- `Engine.registered()` and `Engine.load_config_sources()`.
 - `QueryEngine` honours `output_document_class`: the reports carry that class, and their
   `document_indices` are dropped so the consumer reads the class's own index.
 - Reports carry an `exchange`. A raw routing key (containing `raw`) goes to
