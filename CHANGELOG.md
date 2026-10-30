@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+- Engine configurations in OpenSearch (see [docs/engine-config.md](docs/engine-config.md)):
+  the index `maas-engine-config` keeps every version of each configuration file, tagged
+  with the services that load it (`*` for every service), with tombstones and rollbacks.
+  `maas_engine.config.store.EngineConfigStore` is its only writer; the admin CLI is
+  `python -m maas_engine.cli.config`.
+- `--config-backend opensearch` (`CONFIG_BACKEND`) with `--config-service`
+  (`CONFIG_SERVICE`): the engine loads the files the index serves to its service and
+  checks the index every `--config-refresh-period` seconds (300). A change it can load
+  makes it exit with 75 for swarm to restart it; a change it cannot load is rejected and
+  it keeps running. At startup, it falls back to the versions it last ran on when the
+  current ones cannot be loaded, and waits for a configuration, health check up, when it
+  has none. `file` stays the default.
+- Each engine service writes its entry of the `maas-engine-catalogue` index: its engines,
+  the document classes of its model, the versions it loaded and the last it rejected.
+- `Engine.registered()` and `Engine.load_config_sources()`.
+- `QueryEngine` honours `output_document_class`: the reports carry that class, and their
+  `document_indices` are dropped so the consumer reads the class's own index.
+- Reports carry an `exchange`. A raw routing key (containing `raw`) goes to
+  `collect-exchange` when the engine's config declares that exchange. Otherwise the
+  report goes to `etl-exchange` and a warning is logged.
+- A `QUERY_ENGINE` service must declare `collect-exchange` in its `amqp` list to replay
+  raw data.
+- Set `output_routing_key` whenever `output_document_class` is set. Without it, the
+  report keeps the scanned class's action under the new class.
+- maas-engine now requires maas-model 3.2.0.
+- Rollout order: engines must run maas-engine 3.2.0 (maas-model 3.2.0) before any
+  producer sends `output_document_class`. Older engines build the payload with
+  `PAYLOAD_MODEL(**body)` and reject unknown keys.
+- The declaration a `QUERY_ENGINE` service needs to replay raw data, in its `amqp` list:
+  `{"name": "collect-exchange", "queues": []}`.
+- `QueryEngine` chunks its reports by the message's `chunk_size` when it is set, so a
+  replay of more than 10,000 ids no longer reaches the consolidators as one message.
+
 ## Version 3.2.0
 
 - New replay worker, `python -m maas_engine.replay` (or `maas_replay`): it takes replay

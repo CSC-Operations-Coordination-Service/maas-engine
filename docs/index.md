@@ -14,6 +14,7 @@ maas_engine_cli <maas_engine_cli>
 Connections from the vault <vault>
 Queue utilities <queue_utils>
 Replay worker <replay>
+Configuration in OpenSearch <engine-config>
 Performance Guide <performance_guide>
 Contributions & Help <contributing>
 License <license>

@@ -87,7 +87,10 @@ options:
 
 ## Configuration
 
-TBW
+From JSON files (`-c`, `-d`), or from the OpenSearch index `maas-engine-config` with
+`--config-backend opensearch` and `--config-service`: the engine then follows the
+changes made in maas-operator by itself, and publishes what it runs in the
+`maas-engine-catalogue` index. See [docs/engine-config.md](docs/engine-config.md).
 
 ## AMQP heartbeat
 
