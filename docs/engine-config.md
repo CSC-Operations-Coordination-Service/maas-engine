@@ -33,8 +33,9 @@ and by the admin CLI:
 A write names the version it started from (`--base-version`, 0 for a new path): a
 version published in the meantime makes it fail, never a silent overwrite. `import`
 publishes each file of the services map (`{"default/model.json": ["*"],
-"specific/cds-query.json": ["query-01"]}`) unless its current version already has the
-same content and services, so it can run again. The OpenSearch connection comes from
+"specific/cds-query.json": ["query-01"]}`) that the index does not hold yet. A path
+whose current version differs is only reported, so running the import again never
+undoes the edits made in maas-operator; `--update` publishes over it. The OpenSearch connection comes from
 the engine's options (`ES_URL`... or `ES_VAULT_PATH` with the `VAULT_*` settings).
 
 ## An engine on the index

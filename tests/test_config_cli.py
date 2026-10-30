@@ -68,7 +68,12 @@ def test_import_publishes_once(client, tree):
     ]
 
     (tree / "specific" / "cds-query.json").write_text(json.dumps({**QUERY, **DEFAULTS}))
-    assert run(client, *argv)[1] == "specific/cds-query.json: published version 2"
+    assert run(client, *argv)[1] == (
+        "specific/cds-query.json: differs from version 1, not published"
+    )
+    assert run(client, *argv, "--update")[1] == (
+        "specific/cds-query.json: published version 2"
+    )
 
 
 def test_commands(client, tree):

@@ -93,6 +93,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     imports.add_argument("directory")
     imports.add_argument(
+        "--update",
+        action="store_true",
+        help="also publish over a path whose current version differs; without it, such"
+        " a path is only reported, so that an import never undoes the edits made in"
+        " maas-operator",
+    )
+    imports.add_argument(
         "--services-map",
         required=True,
         type=argparse.FileType("r", encoding="utf-8"),
@@ -123,9 +130,13 @@ def import_directory(
     author: str,
     comment: str,
     out: Callable[[str], None] = print,
+    update: bool = False,
 ) -> int:
-    """Publish every file the services map names, unless its current version has
-    the same content and services already
+    """Publish the files the services map names that the index does not hold yet
+
+    A path whose current version differs (content, services, or a tombstone) is
+    reported, and published only with update: the index is the reference once
+    imported, and maas-operator edits it.
 
     Returns:
         int: number of versions published
@@ -142,6 +153,9 @@ def import_directory(
             and current["services"] == sorted(set(services))
         ):
             out(f"{path}: unchanged (version {current['version']})")
+            continue
+        if current is not None and not update:
+            out(f"{path}: differs from version {current['version']}, not published")
             continue
         doc = store.put(
             path,
@@ -221,6 +235,7 @@ def run(namespace: argparse.Namespace, client, out: Callable[[str], None] = prin
             author,
             comment,
             out,
+            namespace.update,
         )
         out(f"{count} version(s) published")
 
