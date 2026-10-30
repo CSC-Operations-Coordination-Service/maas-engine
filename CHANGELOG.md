@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## Version 3.3.0
 
 - Engine configurations in OpenSearch (see [docs/engine-config.md](docs/engine-config.md)):
   the index `maas-engine-config` keeps every version of each configuration file, tagged
@@ -27,7 +27,7 @@
 - Set `output_routing_key` whenever `output_document_class` is set. Without it, the
   report keeps the scanned class's action under the new class.
 - maas-engine now requires maas-model 3.2.0.
-- Rollout order: engines must run maas-engine 3.2.0 (maas-model 3.2.0) before any
+- Rollout order: engines must run maas-engine 3.3.0 (maas-model 3.2.0) before any
   producer sends `output_document_class`. Older engines build the payload with
   `PAYLOAD_MODEL(**body)` and reject unknown keys.
 - The declaration a `QUERY_ENGINE` service needs to replay raw data, in its `amqp` list:
