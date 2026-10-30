@@ -11,7 +11,7 @@ import importlib
 import json
 import logging
 import os
-from typing import Any, ClassVar, Dict, Iterator, List, Optional, Type
+from typing import Any, ClassVar, Dict, Iterator, List, Optional, Tuple, Type
 from types import ModuleType
 
 from maas_model import MAASDocument, MAASMessage, MAASBaseMessage
@@ -234,6 +234,11 @@ class Engine(ABC):
         return getattr(cls.MODEL_MODULE, model_name)
 
     @classmethod
+    def registered(cls) -> Dict[str, Type["Engine"]]:
+        """Copy of the registry of all engines indexed by ENGINE_ID"""
+        return dict(Engine.__ALL_ENGINES)
+
+    @classmethod
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
 
@@ -335,19 +340,31 @@ class Engine(ABC):
         logging.info("Importing configuration from directory: %s", directory_path)
         # Store config in a "buffer" minimize fs access for multiples access
         config_files = cls.find_configurations(directory_path)
-        config_dicts_from_files = {}
+        config_dicts_from_files = []
         for path in config_files:
             with open(path, "r", encoding="utf-8") as config_file:
-                config_file_dict = json.load(config_file)
-                config_dicts_from_files[path] = config_file_dict
-        for path, config_dict in config_dicts_from_files.items():
+                config_dicts_from_files.append((path, json.load(config_file)))
+        cls.load_config_sources(config_dicts_from_files)
+
+    @classmethod
+    def load_config_sources(cls, sources: List[Tuple[str, Dict[str, Any]]]):
+        """Load configurations already read, in the given order
+         - import modules, model, default config and logging config of every source
+        then:
+         - import engines of every source (could need modules imported)
+
+        Args:
+            sources (list): (name, configuration dict) pairs, a name being a file path
+                or a path of the configuration index
+        """
+        for name, config_dict in sources:
             logging.info(
-                "Loading modules, model, defaults, logging configs from file: %s", path
+                "Loading modules, model, defaults, logging configs from: %s", name
             )
             cls.import_general_config(config_dict)
         # load exchanges at the end (may need modules and model imported)
-        for path, config_dict in config_dicts_from_files.items():
-            logging.info("Loading exchange configs from file: %s", path)
+        for name, config_dict in sources:
+            logging.info("Loading exchange configs from: %s", name)
             cls.import_exchanges_config(config_dict)
 
     @classmethod
