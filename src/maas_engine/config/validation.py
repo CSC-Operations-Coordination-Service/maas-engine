@@ -2,18 +2,21 @@
 Checks of engine configurations, shared by the engines and maas-operator-backend.
 
 A configuration is the content of one file: {amqp?, modules?, model?, defaults?,
-logging?}. The checks here need nothing but the content, except import_problems,
-which imports what the configuration names and so runs in an engine only.
+logging?}. The checks here need nothing but the content, except load_problems,
+which loads a set in a fresh Python process and so runs where the engine's
+modules are installed: in an engine.
 """
 
-import importlib
+import json
 import logging
+import subprocess
+import sys
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 __all__ = [
     "TOP_LEVEL_KEYS",
     "engine_ids",
-    "import_problems",
+    "load_problems",
     "routing_keys",
     "set_problems",
     "structure_problems",
@@ -34,6 +37,17 @@ def _event_id(event: Any) -> Optional[str]:
     if isinstance(event, dict) and isinstance(event.get("id"), str):
         return event["id"]
     return None
+
+
+def _is_id_or_ids(value: Any) -> bool:
+    """an engine id, or a non-empty list of them, as set_default_arguments reads"""
+    if isinstance(value, str):
+        return bool(value)
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(item, str) and item for item in value)
+    )
 
 
 def _queues(content: Dict[str, Any]) -> Iterable[Tuple[str, Dict[str, Any]]]:
@@ -76,9 +90,12 @@ def structure_problems(content: Any) -> List[str]:
 
     defaults = content.get("defaults", [])
     if not isinstance(defaults, list) or not all(
-        isinstance(item, dict) and "id" in item for item in defaults
+        isinstance(item, dict) and _is_id_or_ids(item.get("id")) for item in defaults
     ):
-        problems.append("defaults must be a list of objects with an id")
+        problems.append(
+            "defaults must be a list of objects with an id, an engine id or a list"
+            " of engine ids"
+        )
 
     levels = content.get("logging", {})
     if not isinstance(levels, dict):
@@ -199,6 +216,13 @@ def set_problems(
                 )
             declared.setdefault(key, path)
 
+    consumers = [path for path, content in well_formed if engine_ids(content)]
+    if consumers and not any("model" in content for _, content in well_formed):
+        problems.append(
+            f"{', '.join(consumers)}: no file of the set names a model, which the"
+            " engines need to read documents"
+        )
+
     if known_engine_ids is not None:
         known = set(known_engine_ids)
         for path, content in well_formed:
@@ -209,27 +233,53 @@ def set_problems(
     return problems
 
 
-def import_problems(sources: Sources) -> List[str]:
-    """Import the modules and the model the configurations name
+# run in a fresh interpreter: what a restarted engine would do with the set
+LOAD_SCRIPT = """
+import json, sys
+from maas_engine.engine.base import Engine
+try:
+    Engine.load_config_sources(json.load(sys.stdin))
+except Exception as error:
+    print(json.dumps(f"{type(error).__name__}: {error}"))
+else:
+    print(json.dumps(None))
+"""
 
-    Importing registers the engines of the modules, so the caller can check the
-    engine ids afterwards. Engine side only: the modules must be installed.
+LOAD_TIMEOUT = 300
+
+
+def load_problems(sources: Sources) -> List[str]:
+    """Load a set the way a restarted engine would: in a fresh Python process, so
+    that the modules this process imported already do not hide a missing one
+
+    Engine side only: the modules and the model must be installed.
 
     Args:
         sources (Sources): (path, content) pairs without structure problems
 
     Returns:
-        List[str]: the names that could not be imported, and why
+        List[str]: why the set cannot be loaded, empty when it can
     """
-    problems = []
-    for path, content in sources:
-        names = list(content.get("modules", []))
-        if "model" in content:
-            names.append(content["model"])
-        for name in names:
-            try:
-                importlib.import_module(name)
-            except Exception as error:  # pylint: disable=broad-exception-caught
-                logging.debug("Cannot import %s", name, exc_info=True)
-                problems.append(f"{path}: cannot import {name}: {error}")
-    return problems
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", LOAD_SCRIPT],
+            input=json.dumps([list(pair) for pair in sources]),
+            capture_output=True,
+            text=True,
+            timeout=LOAD_TIMEOUT,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return [f"loading the set took more than {LOAD_TIMEOUT} s"]
+
+    lines = result.stdout.strip().splitlines()
+    try:
+        error = json.loads(lines[-1]) if lines else "no answer"
+    except json.JSONDecodeError:
+        error = lines[-1]
+    if result.returncode != 0 and error is None:
+        error = f"exit code {result.returncode}"
+    if error is None:
+        return []
+    logging.debug("Loading the set failed: %s", result.stderr)
+    return [f"cannot load the set: {error}"]

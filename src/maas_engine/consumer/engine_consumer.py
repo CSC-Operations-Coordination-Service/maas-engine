@@ -66,7 +66,11 @@ class MaasEngineConsumer(MaasConsumerMixin):
 
         """
 
-        if getattr(self.args, "config_backend", "file") == "opensearch":
+        # an environment default escapes argparse's choices
+        backend = str(getattr(self.args, "config_backend", None) or "file").lower()
+        if backend not in ("file", "opensearch"):
+            raise ValueError(f"CONFIG_BACKEND must be file or opensearch: {backend!r}")
+        if backend == "opensearch":
             self.load_config_from_index()
         else:
             if not (self.args.config or self.args.config_directory):
@@ -109,6 +113,8 @@ class MaasEngineConsumer(MaasConsumerMixin):
         one while there is none (see maas_engine.config.runtime)"""
         if not self.args.config_service:
             raise ValueError("--config-backend opensearch needs --config-service")
+        if self.args.config_refresh_period < 1:
+            raise ValueError("--config-refresh-period must be 1 second or more")
 
         client = OpenSearch(
             hosts=[self.args.es_url],

@@ -2,6 +2,7 @@
 
 import pytest
 
+from maas_engine.config import runtime as runtime_module
 from maas_engine.config.runtime import ConfigRuntime
 from maas_engine.config.store import EngineConfigStore
 from maas_engine.engine.base import Engine
@@ -14,6 +15,7 @@ DEFAULTS = {"modules": ["maas_engine.engine.query"], "model": "maas_model"}
 def query(routing_key="query.cds", engine="QUERY_ENGINE"):
     """the configuration of a query engine"""
     return {
+        "model": "maas_model",
         "amqp": [
             {
                 "name": "etl-exchange",
@@ -25,7 +27,7 @@ def query(routing_key="query.cds", engine="QUERY_ENGINE"):
                     }
                 ],
             }
-        ]
+        ],
     }
 
 
@@ -112,7 +114,9 @@ def test_start_falls_back_to_the_versions_last_loaded(store):
     assert entry["loaded"] == {"specific/cds-query.json": 1}
     assert entry["current"] == {"specific/cds-query.json": 2}
     assert entry["rejected"]["versions"] == {"specific/cds-query.json": 2}
-    assert "unknown engine ids NO_SUCH_ENGINE" in entry["rejected"]["reason"]
+    assert (
+        "Missing engine implementations: NO_SUCH_ENGINE" in entry["rejected"]["reason"]
+    )
     # the watcher does not reject the same versions again
     assert not runtime.check_once()
 
@@ -227,3 +231,63 @@ def test_consumer_wiring():
 
     consumer.restart_for_config()
     assert consumer.exit_code == 75 and consumer.should_stop
+
+
+ENGINE_MODULE = """
+from maas_engine.engine.base import Engine
+
+
+class TestOnlyEngine(Engine):
+    \"\"\"registered by importing this module\"\"\"
+
+    ENGINE_ID = "TEST_ONLY_ENGINE"
+
+    def run(self, routing_key, payload):
+        return iter(())
+"""
+
+
+def test_a_change_is_checked_without_what_the_process_imported(
+    store, tmp_path, monkeypatch
+):
+    """the running engine imported a module the new set no longer names: a fresh
+    engine would miss its engines, so the change is rejected"""
+    (tmp_path / "test_only_engines.py").write_text(ENGINE_MODULE)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+
+    store.put(
+        "default/modules.json", {"modules": ["test_only_engines"]}, ["*"], "alice"
+    )
+    store.put(
+        "specific/q.json", query(engine="TEST_ONLY_ENGINE"), ["query-01"], "alice"
+    )
+    runtime = runtime_of(store)
+    runtime.start()
+
+    store.delete("default/modules.json", "bob", base_version=1)
+
+    assert not runtime.check_once()
+    assert "TEST_ONLY_ENGINE" in runtime.entry["rejected"]["reason"]
+
+
+def test_waiting_does_not_check_a_refused_set_again(store, monkeypatch):
+    store.put(
+        "specific/q.json", {"modules": ["maas_engine.nothing_here"]}, ["query-01"], "a"
+    )
+    checks = []
+    original = runtime_module.problems_of
+    monkeypatch.setattr(
+        runtime_module,
+        "problems_of",
+        lambda sources: checks.append(1) or original(sources),
+    )
+
+    def fix():
+        store.put("specific/q.json", query(), ["query-01"], "b", base_version=1)
+
+    runtime = runtime_of(store, sleeps=[lambda: None, lambda: None, fix])
+    runtime.start()
+
+    # the refused set once, then the fixed one
+    assert len(checks) == 2

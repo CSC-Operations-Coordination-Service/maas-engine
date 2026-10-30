@@ -42,7 +42,7 @@ class FakeOpenSearch:
         documents[id] = copy.deepcopy(body)
         return {"_id": id, "result": "created"}
 
-    def update(self, index, id, body, refresh=None):
+    def update(self, index, id, body, refresh=None, retry_on_conflict=0):
         # pylint: disable=redefined-builtin,unused-argument
         self._check()
         try:

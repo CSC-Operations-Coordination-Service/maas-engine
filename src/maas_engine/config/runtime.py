@@ -35,7 +35,7 @@ from maas_engine.config.provider import (
     fingerprint,
 )
 from maas_engine.config.store import ConfigNotFoundError
-from maas_engine.config.validation import import_problems, set_problems
+from maas_engine.config.validation import load_problems, set_problems
 from maas_engine.engine.base import Engine
 from maas_engine.health.serverthread import ServerThread
 
@@ -53,14 +53,10 @@ def versions(sources: List[ConfigSource]) -> Dict[str, int]:
 
 
 def problems_of(sources: List[ConfigSource]) -> List[str]:
-    """what prevents an engine from loading a set: its structure, the modules and
-    model it imports, then its engine ids, known once the modules are imported"""
+    """what prevents an engine from loading a set: its structure, then a load in a
+    fresh process (modules, model, defaults, engine implementations)"""
     pairs = [(source.path, source.content) for source in sources]
-    return (
-        set_problems(pairs)
-        or import_problems(pairs)
-        or set_problems(pairs, Engine.registered())
-    )
+    return set_problems(pairs) or load_problems(pairs)
 
 
 def waiting_app() -> Flask:
@@ -106,6 +102,8 @@ class ConfigRuntime:
         self.running: List[ConfigSource] = []
         # the current set last looked at, accepted or rejected
         self.seen = ""
+        # a current set rejected while waiting, with nothing to fall back to
+        self.refused = ""
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
@@ -151,12 +149,18 @@ class ConfigRuntime:
         if not current:
             LOGGER.info("waiting for a configuration of service %s", self.service)
             return []
+        if self.seen == self.refused:
+            # rejected already, and nothing to fall back to: wait for a change
+            return []
         problems = problems_of(current)
         if not problems:
             self.entry["rejected"] = None
             return current
         self._reject(current, problems)
-        return self._fallback()
+        fallback = self._fallback()
+        if not fallback:
+            self.refused = self.seen
+        return fallback
 
     def start(self, health_host: str = "0.0.0.0", health_port: int = 0) -> None:
         """Load the configuration of the service into the engine, waiting for one

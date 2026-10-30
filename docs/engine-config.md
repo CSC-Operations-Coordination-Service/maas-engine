@@ -49,10 +49,13 @@ the engine's options (`ES_URL`... or `ES_VAULT_PATH` with the `VAULT_*` settings
 | `--catalogue-index` | `ENGINE_CATALOGUE_INDEX` | `maas-engine-catalogue` |
 
 The engine loads the current, non-deleted versions served to its service, in path
-order, as `-d` loads the files of a directory.
+order (`-d` loads files in directory-walk order: the two differ only when two files
+set the same `defaults` id or `model`).
 
 - **A change.** Every refresh period the engine looks at the index. A new set it can
-  load (its structure is right, its modules and model import, its engine ids exist):
+  load (its structure is right, a model is named when engines consume queues, and a
+  fresh Python process loads it: modules, model, defaults and engine implementations,
+  without what the running process imported already):
   it logs `configuration changed: ..., restarting`, stops consuming and exits with
   code 75. Swarm (`restart_policy: any`) restarts it on the new versions. A set it
   cannot load: it logs `configuration change rejected: ...`, records the reason in its

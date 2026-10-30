@@ -2,7 +2,7 @@
 
 from maas_engine.config.validation import (
     engine_ids,
-    import_problems,
+    load_problems,
     routing_keys,
     set_problems,
     structure_problems,
@@ -62,7 +62,8 @@ def test_structure_problems_name_what_is_wrong():
         "amqp[1] must be an object with a name",
         "modules must be a list of module names",
         "model must be a module name",
-        "defaults must be a list of objects with an id",
+        "defaults must be a list of objects with an id, an engine id or a list of"
+        " engine ids",
         "logging level of 'x' is not a level: 'LOUD'",
     ]
 
@@ -108,14 +109,47 @@ def test_set_problems_finds_duplicate_queues_and_unknown_engines():
     assert not set_problems(sources[:2])
 
 
-def test_import_problems():
-    assert not import_problems([("default/default.json", DEFAULTS)])
+def test_load_problems_loads_in_a_fresh_process():
+    assert not load_problems([("default/default.json", DEFAULTS), ("q.json", QUERY)])
 
-    problems = import_problems(
+    (problem,) = load_problems(
         [("default/modules.json", {"modules": ["maas_engine.nothing_here"]})]
     )
+    assert problem.startswith("cannot load the set: ModuleNotFoundError")
 
-    assert len(problems) == 1
-    assert problems[0].startswith(
-        "default/modules.json: cannot import maas_engine.nothing_here:"
+    (problem,) = load_problems(
+        [
+            ("default/default.json", DEFAULTS),
+            (
+                "q.json",
+                {
+                    "amqp": [
+                        {
+                            "name": "x",
+                            "queues": [
+                                {
+                                    "name": "q",
+                                    "routing_key": "k",
+                                    "events": ["NO_SUCH_ENGINE"],
+                                }
+                            ],
+                        }
+                    ]
+                },
+            ),
+        ]
     )
+    assert "Missing engine implementations: NO_SUCH_ENGINE" in problem
+
+
+def test_defaults_ids_and_the_model():
+    assert structure_problems({"defaults": [{"id": ["A", "B"], "x": 1}]}) == []
+    for bad in (None, 3, {}, [], [""], ""):
+        assert structure_problems({"defaults": [{"id": bad}]}), bad
+
+    # engines consume queues: one file of the set must name the model
+    assert set_problems([("q.json", QUERY)]) == [
+        "q.json: no file of the set names a model, which the engines need to read"
+        " documents"
+    ]
+    assert not set_problems([("default/model.json", {"model": "m"}), ("q.json", QUERY)])

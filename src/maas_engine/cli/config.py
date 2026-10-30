@@ -46,9 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
         ],
     )
     parser.add_argument(
-        "--author",
-        default=os.environ.get("USER") or getpass.getuser(),
-        help="who writes (default: %(default)s)",
+        "--author", help="who writes (default: $USER, else the login name)"
     )
     parser.add_argument("--comment", default="", help="why")
 
@@ -107,6 +105,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
+
+def default_author() -> str:
+    """$USER, else the login name; a container user may have neither"""
+    if os.environ.get("USER"):
+        return os.environ["USER"]
+    try:
+        return getpass.getuser()
+    except (KeyError, OSError):
+        return "unknown"
 
 
 def _row(doc: dict) -> str:
@@ -174,7 +182,7 @@ def run(namespace: argparse.Namespace, client, out: Callable[[str], None] = prin
     """run a parsed command against a client"""
     # pylint: disable=too-many-branches
     store = EngineConfigStore(client, namespace.config_index)
-    author, comment = namespace.author, namespace.comment
+    author, comment = namespace.author or default_author(), namespace.comment
 
     if namespace.command == "init-index":
         store.ensure_index()

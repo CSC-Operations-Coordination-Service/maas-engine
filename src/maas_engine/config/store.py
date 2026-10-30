@@ -306,6 +306,8 @@ class EngineConfigStore:
                     id=document_id(path, doc["version"]),
                     body={"doc": {"latest": False}},
                     refresh="wait_for",
+                    # two publishes of the path may clear the same flag at once
+                    retry_on_conflict=3,
                 )
 
     def put(
